@@ -1,0 +1,9 @@
+uvicorn
+fastapi
+python-dotenv
+redis
+colorlog
+httpx
+anyio
+pytest
+coverage
