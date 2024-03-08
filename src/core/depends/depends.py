@@ -3,12 +3,12 @@ from random import choice
 from fastapi import Depends
 from fastapi import Request
 
-from core.utils.mytypes import clients
+from core.utils.mytypes import Clients
 
 
 # TODO Добавить проверку в бд ip:client (есть вероятность, что зайдет через браузер сначала)
 
-def get_type_client(request: Request) -> clients:
+def get_type_client(request: Request) -> Clients:
     if not (usag := request.headers.get("user-agent", None)):
         usag = request.headers.get("User-Agent", None)
     

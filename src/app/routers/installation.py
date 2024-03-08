@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from core.settings import config
-from core.utils.mytypes import clients
 
 router = APIRouter()
 
