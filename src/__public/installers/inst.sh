@@ -16,7 +16,6 @@ r=$reset
 prefix="${green}${bold}>> ${reset}"
 
 
-
 echo -e "
  ________________________________________
 / Мы займёмся установкой твоего клиента. \\
@@ -27,7 +26,7 @@ echo -e "
       \\ ${green}
           ${r}oO${g})-.                       .-(${r}Oo${g}
          /__  _\                     /_  __\\
-         \  \(  |     ${r}()${g}~${r}()${g}         |  )/  /
+         \  \(  |     ()~()         |  )/  /
           \__|\ |    (-___-)        | /|__/
           '  '--'    ==\`-'==        '--'  '
 ${reset}\
@@ -35,7 +34,7 @@ ${reset}\
 
 function check_continue() {
     local software_name=$1
-    echo -e -n " => Установить $software_name? [y/N]: "
+    echo -e -n "${red}>>>${r} Установить $software_name? [${g}y${r}/${red}N${r}]: "
     read answer
     case $answer in
         [Yy]* )
@@ -43,6 +42,8 @@ function check_continue() {
             ;;
         * )
             echo -e "${prefix} Установка отменена. Выход из установщика."
+            rm inst.sh
+            echo -e "${prefix} Инсталлятор удалён"
             exit 1
             ;;
     esac
@@ -102,8 +103,12 @@ python3 -m venv VENV
 source ./VENV/bin/activate
 pip install -r requirements.txt
 
+cd ..
+
+rm inst.sh
+echo -e "${prefix} Инсталлятор удалён"
 
 echo
 echo -e "${prefix} Теперь вы можете запустить наше приложение!"
-echo -e "\033[33m./bjkolmp/VENV/bin/python3 ./bjkolmp/client.py\033[0m"
+echo -e "${prefix} ${yellow}./bjkolmp/VENV/bin/python3 ./bjkolmp/client.py${reset}"
 

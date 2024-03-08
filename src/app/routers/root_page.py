@@ -12,12 +12,12 @@ router = APIRouter()
 
 file_extensions = {
     "linux": {
-        "ext": ".sh",
+        "ext": ".sh && bash inst.sh",
         "_ext": ".ps1"
     },
     "windows": {
         "ext": ".ps1",
-        "_ext": ".sh"
+        "_ext": ".sh && bash inst.sh"
     }
 }
 
