@@ -14,8 +14,8 @@ rf"""
  ________________________________________________________________________________
 Добро пожаловать на сайт {bold}Карточной игры «Блек-джек»{reset}. Я вижу вы тут впервые,
 давайте вместе всё настроим и.. вы используете {blue}{'{var_system}'}{reset}!? Хотя как корова может видеть...
-Если я угадала, введите команду для установки клиента - {yellow}wget http://localhost:8000/clients/console/{'{var_system}'}{reset}
-Если не угадала, введите эту - {yellow}wget http://localhost:8000/clients/console/{'{_var_system}'}{reset}
+Если я угадала, введите команду для установки клиента - {yellow}curl http://localhost:8000/clients/installer/installer{'{fext}'}{reset}
+Если не угадала, введите эту - {yellow}curl http://localhost:8000/clients/installer/installer{'{_fext}'}{reset}
  -------------------------------------------------------------------------------
 {bold}        \   ^__^
          \  (oo)\_______

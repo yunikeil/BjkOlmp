@@ -10,6 +10,21 @@ from core.utils.mytypes import clients, reverse_client
 router = APIRouter()
 
 
+file_extensions = {
+    "linux": {
+        "ext": ".sh",
+        "_ext": ".ps1"
+    },
+    "windows": {
+        "ext": ".ps1",
+        "_ext": ".sh"
+    }
+}
+
 @router.get("/")
-async def root_page(client: clients = Depends(get_type_client)):
-    return PlainTextResponse(main_pages[client].format(var_system=client, _var_system=reverse_client(client)))
+async def root_page(client: str = Depends(get_type_client)):
+    ext = file_extensions.get(client, file_extensions["windows"])["ext"]
+    _ext = file_extensions.get(client, file_extensions["windows"])["_ext"]
+    
+    response_text = main_pages[client].format(var_system=client, fext=ext, _fext=_ext)
+    return PlainTextResponse(response_text)
