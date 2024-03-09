@@ -140,9 +140,10 @@ class RoundPlayer(HumanBaseBJ):
     """
     Класс отвечающий за игрока
     """
-    def __init__(self) -> None:
+    def __init__(self, publick_name: str) -> None:
         self.__gamer_bank = 5000
         self.__current__bet: int
+        self.publick_name: str = publick_name
         self.id: str = uuid.uuid4().hex
         
         super().__init__()
