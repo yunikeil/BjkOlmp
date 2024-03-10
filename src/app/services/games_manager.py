@@ -49,6 +49,7 @@ class ConnectionContext:
 class GameConnectionManager:
     ws_connections: dict[str, WebSocket] = {}
     rooms: dict[bj_core.GameRoom, set[str]] = {}
+    rooms_players: set[str] = {}
 
     def __init__(self):
         pass
@@ -56,9 +57,11 @@ class GameConnectionManager:
     async def __call__(
         self,
         websocket: WebSocket,
-        publick_name = Header(generate_name(), alias="Publick-Name"),
+        publick_name = Header(None, alias="Publick-Name"),
         ws_type = Header("text", alias="Connection-Type"),
     ):
+        if not publick_name:
+            publick_name = generate_name()
         player = bj_core.RoundPlayer(publick_name)
         return ConnectionContext(websocket, player, ws_type), self
 
@@ -79,7 +82,7 @@ class GameConnectionManager:
     async def connect(self, conn_context: ConnectionContext):
         await conn_context.websocket.accept()
         self.ws_connections[conn_context.player.id] = conn_context.websocket
-        await self.send_event("data_update", {"player_id": conn_context.player.id}, conn_context.websocket)
+        await self.send_event("base_game_data_update", {"player_id": conn_context.player.id}, conn_context.websocket)
     
     async def disconnect(self, conn_context: ConnectionContext):
         del self.ws_connections[conn_context.player.id]
@@ -133,7 +136,7 @@ class GameConnectionManager:
                     max_players = data.get("max_players", 2)
                     room_id = self.__create_room(conn_context.player, max_players)
         
-        await self.send_event("data_update", {"room_id": room_id}, conn_context.websocket)
+        await self.send_event("base_game_data_update", {"room_id": room_id}, conn_context.websocket)
     
     async def __process_start_game(self, conn_context: ConnectionContext):       
         for room, players in self.rooms.items():
@@ -141,7 +144,7 @@ class GameConnectionManager:
                 continue
             
             room.start_game()
-            await self.broadcast(players, "data_update", {"is_started": True})
+            await self.broadcast(players, "base_game_data_update", {"is_started": True})
             break
         
     async def __process_event_type(
