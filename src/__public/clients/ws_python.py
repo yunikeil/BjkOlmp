@@ -278,7 +278,7 @@ class BaseGameBJ:
     async def connect(self):
         conn_data: dict = (await self.__receive_json()).get("data")
         self.ws_id = conn_data.get("player_id")
-        self.players.append(Player(-1, -1, conn_data.get("my_name"), True))
+        self.players.append(Player(5000, -1, conn_data.get("my_name"), True))
         asyncio.gather(self.__start_listen_ws_events())
         #tasks.add(t)
         
@@ -434,7 +434,7 @@ async def main():
     v = int(n_input("Создать комнату/присоединиться? [0/1]: "))
     
     async with websockets.connect(BASE_URI) as ws:
-        game = BaseGameBJ(ws, 1)
+        game = BaseGameBJ(ws, 2)
         await game.connect()
         
         if not v:
