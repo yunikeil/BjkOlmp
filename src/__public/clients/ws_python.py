@@ -16,6 +16,72 @@ BASE_URI = "ws://localhost:8000/ws/blackjack/"
 
 tasks: set[asyncio.Task] = set()
 
+
+# len - 11
+VIEW_CARD = """\
+┌─────────┐
+│ {}      │
+│         │
+│    {}   │
+│         │
+│      {} │
+└─────────┘
+""".format(
+    "{weight: <2}", "{suit: <2}", "{weight_: >2}"
+)
+HIDDEN_CARD = """\
+┌─────────┐
+│░░░░░░░░░│
+│░░░░░░░░░│
+│░░░░░░░░░│
+│░░░░░░░░░│
+│░░░░░░░░░│
+└─────────┘
+"""
+
+CardNumber = Literal[
+    "Aces", "2", "3", "4", "5", "6", "7", "8", "9", "10", "Jack", "Queen", "King"
+]
+CardSuit = Literal["heart", "diamond", "club", "spade"]
+
+CARDS_WEIGHT: dict[CardNumber, int] = {
+    "Aces": [11, 1],
+    "2": [2, 2],
+    "3": [3, 3],
+    "4": [4, 4],
+    "5": [5, 5],
+    "6": [6, 6],
+    "7": [7, 7],
+    "8": [8, 8],
+    "9": [9, 9],
+    "10": [10, 10],
+    "Jack": [10, 10],
+    "Queen": [10, 10],
+    "King": [10, 10],
+}
+REVERS_WEIGHT: dict[str, str] = {
+    "A": "V",
+    "2": "Z",
+    "3": "E",
+    "4": "h",
+    "5": "S",
+    "6": "9",
+    "7": "L",
+    "8": "8",
+    "9": "6",
+    "10": "0I",
+    "J": "ɾ",
+    "Q": "ᕹ",
+    "K": "ʞ",
+}
+CARDS_SUITS: dict[CardSuit, str] = {
+    "heart": "♥",  # червы
+    "diamond": "♦",  # бубны
+    "club": "♣",  # трефы
+    "spade": "♠",  # пики
+}
+
+
 def async_exit_handler(func):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
@@ -36,12 +102,53 @@ class Card:
     weight: str
     suit: str
 
+    @staticmethod
+    def from_json(data: dict) -> "Card":
+        return Card(
+            data.get("weight"),
+            data.get("suit")
+        )
+
+    def draw(self):
+        weight = self.weight if self.weight == "10" else self.weight[0]
+        print(VIEW_CARD.format(
+            weight=weight, weight_=REVERS_WEIGHT[weight], suit=CARDS_SUITS[self.suit]
+        ))
+
+    @staticmethod
+    def draw_hidden():
+        print(HIDDEN_CARD)
+
 
 @dataclass
 class Player:
+    bank: int
+    bet: int
     publick_name: str
+    is_me: bool = None
     cards: list[Card] = None
     
+    @staticmethod
+    def from_json(data: dict) -> "Player":
+        cards = []
+        for card_json in data.get("cards", []):
+            cards.append(Card.from_json(card_json))
+            
+        return Player(
+            data.get("gamer_bank"),
+            data.get("current_bet"),
+            data.get("publick_name"),
+            cards
+        )
+    
+    def update_from_json(self, data: dict):
+        self.bank = data.get("gamer_bank")
+        self.bet = data.get("current_bet")
+        
+        self.cards = []
+        for card_json in data.get("cards", []):
+            self.cards.append(Card.from_json(card_json))
+                    
     def add_cards(self, cards: list[Card]):
         """
         Добавляет карты игроку
@@ -49,21 +156,41 @@ class Player:
         for card in cards:
             self.cards.append(card)
             
-    def draw(self):
-        print(f"Имя: {self.publick_name}")
+    def draw(self, is_started: bool):
+        print(f"Имя: {'Me(' if self.is_me else ''}{self.publick_name}{')' if self.is_me else ''}")
+        print(f"Текущая ставка: {self.bet}")
+        print(f"Текущий банк: {self.bank}")
         print(f"Кол-во карт: {len(self.cards) if self.cards else 0}")
+        if is_started and self.cards:
+            for card in self.cards:
+                card.draw()
+
+
+# python src/__public/clients/ws_python.py
 
 
 class BaseGameBJ:
-    def __init__(self, ws: websockets.WebSocketClientProtocol) -> None:
+    def __init__(self, ws: websockets.WebSocketClientProtocol, max_players: int = -1) -> None:
         self.server = ws
+        self.queue_inputs: list[str] = []
+        
         # base game data
         self.is_started: bool = False
-        self.max_players: int = 3 # пока вручную
+        self.max_players: int = max_players
         self.ws_id = None
 
         # users_update   # user_update
-        self.players: list[Player] = [Player("Me")]
+        self.players: list[Player] = []
+        self.dealer: Player = Player(-1, -1, "DealerBoss")
+        
+        self.all_server_methods: dict = {
+            "do_deal": [self.do_deal],
+            "do_stand": [self.do_stand],
+            #"do_split": ...,
+            "do_double": [self.do_double],
+            "do_hit": [self.do_hit],
+        }
+        self.accepted_methods: list = []
 
     async def __disconnect(self) -> None:
         await self.server.close_connection()
@@ -75,21 +202,33 @@ class BaseGameBJ:
         data = json.loads(await self.server.recv())
         await asyncio.sleep(0)
         return data
-    
+
+    def find_player(self, publick_name):
+        for player in self.players:
+            if player.publick_name == publick_name:
+                return player
+        
     async def __process_users_update(self, data: dict):
-        print("    |data| users_update", data)
+        print("    |data| users_update", data)   
         
         draw_event = None
-        if player_name := data.get("connected"):
-            self.players.append(Player(player_name))
+        if player_name := data.get("connected", False):
+            self.players.append(Player(5000, -1, player_name, False))
             draw_event = data
-        elif player_name := data.get("disconnected"):
+        
+        elif player_name := data.get("disconnected", False):
             for player in self.players:
                 if player.publick_name == player_name:
                     self.players.remove(player)
                     draw_event = data
                     break
         
+        elif new_user_data := data.get("user_data", False):
+            new_user_data: dict
+            player = self.find_player(new_user_data.get("publick_name"))
+            player.update_from_json(new_user_data)
+            draw_event = new_user_data.get("draw_event", None)
+            
         if not self.is_started:
             await self.check_wait_players()
             
@@ -99,12 +238,31 @@ class BaseGameBJ:
         print("    |data| base_game_data_update", data)
         for key, value in data.items():
             setattr(self, key, value)
+            
+    async def _process_game_data_update(self, data: dict):
+        self.max_players = data.get("max_players")
+        for player_json in data.get("players", []):
+            pl = Player.from_json(player_json)
+            self.players.append(pl)
+        
+        self.dealer = Player.from_json(data.get("dealer"))
+        self.is_started = data.get("is_started")
         
     async def __process_event_type(self, event: str, data: dict):
         match event:
+            case "game_data_update":
+                # Полное обновление всех полей
+                # Происходит когда клиент ПРИСОЕДИНЯЕТСЯ к комнате
+                draw_event = await self._process_game_data_update(data)
             case "users_update":
+                # Обновление юзеров 
+                # Происходит когда в комнату кто-либо заходит или выходит
                 draw_event = await self.__process_users_update(data)
             case "base_game_data_update":
+                # Частичное заполнение полей например 
+                # при первичном подключении к серверу
+                # или при СОЗДАНИИ новой комнаты
+                # или при начале игры (is_started)
                 draw_event = await self.__process_base_game_data_update(data)
         
         await self.draw_game(draw_event)
@@ -118,9 +276,11 @@ class BaseGameBJ:
             await self.__process_event_type(event_type, data)
 
     async def connect(self):
-        self.ws_id = (await self.__receive_json()).get("player_id")
-        t = asyncio.create_task(self.__start_listen_ws_events())
-        tasks.add(t)
+        conn_data: dict = (await self.__receive_json()).get("data")
+        self.ws_id = conn_data.get("player_id")
+        self.players.append(Player(-1, -1, conn_data.get("my_name"), True))
+        asyncio.gather(self.__start_listen_ws_events())
+        #tasks.add(t)
         
     async def create_new_round(self):
         await self.__send_json(
@@ -128,7 +288,7 @@ class BaseGameBJ:
                 "event": "find_game",
                 "data": {
                     "game_type": "new",
-                    "max_players": 3
+                    "max_players": self.max_players
                 }
             }
         )
@@ -138,8 +298,8 @@ class BaseGameBJ:
             {
                 "event": "find_game",
                 "data": {
-                    "game_type": "new",
-                    "max_players": 3
+                    "game_type": "old",
+                    #"max_players": self.max_players
                 }
             }
         )
@@ -151,65 +311,143 @@ class BaseGameBJ:
             }
         )
     
+    async def do_deal(self) -> tuple:
+        # Делаем ставку, с получением карт (1)
+        bet = int(await self.process_input_command("Введите ставку", processor=n_b_input))
+        
+        await self.__send_json(
+            {
+                "event": "do_deal",
+                "data": {
+                    "bet": bet
+                }
+            }
+        )
+
+    async def do_stand(self) -> bool:
+        # Игрок завершает раунд оставляет текущее кол-во очков (2)
+        # Диллер добавляет себе карты пока ещё счёт не станет больше 16
+        await self.__send_json(
+            {
+                "event": "do_stand",
+            }
+        )
+    
+    async def do_double(self):
+        # Игрок удваивает ставку с запросом новой карты
+        # Работает только после превого хода
+        await self.__send_json(
+            {
+                "event": "do_double",
+            }
+        )
+
+    async def do_hit(self):
+        # Игрок просит новую карту, можно делать пока не будет > 21
+        await self.__send_json(
+            {
+                "event": "do_hit",
+            }
+        )
+    
     async def check_wait_players(self):
         if len(self.players) == self.max_players:
             await self.start_game()
     
+    async def process_input_command(self, question = None, processor = None, *args):        
+        if not self.is_started:
+            return
+
+        if not question:
+            pre_q = "Разрешенные действия: \n" + str(self.accepted_methods) + "\nВыберите индекс нужного действия: "
+            print(pre_q)
+            self.queue_inputs.append(pre_q)
+        else:
+            print(question)
+            self.queue_inputs.append(question)
+
+        if processor:
+            command = await processor(*args)
+        
+        if not question:
+            self.queue_inputs.remove(pre_q)
+            await self.all_server_methods[self.accepted_methods[int(command)]][0]()
+        else:
+            self.queue_inputs.remove(question)
+            return command
+    
     async def draw_game(self, draw_event: dict = {}):
+        print()
         print("================================== next_list ==================================")#os.system("clear")
         if not self.is_started:
             print("Ожидание игроков...")
             print("Игроков в лобби:", len(self.players))
             for player in self.players:
                 print("------------")
-                player.draw()
-            return
+                player.draw(self.is_started)
+                
         elif self.is_started:
             if draw_event:
-                if gm := draw_event.get("")
-                elif nm := draw_event.get("disconnected"):
+                if nm := draw_event.get("disconnected"):
                     print(f"Кажется {nm} покинул игру, печально!")
+            
             print("Игра идёт!")
             print("Игроков в лобби:", len(self.players))
+            print("Диллер: ")
+            self.dealer.draw(self.is_started)
             for player in self.players:
                 print("------------")
-                player.draw()
-            return
-
+                player.draw(self.is_started)
+        print("------------")
+        
+        if self.queue_inputs:
+            print(self.queue_inputs[-1])
+        
+        
+ 
 # !TODO серв часть обработка вертание карт
 # TODO(when) основа готова (need) рефактор
 
-def n_input(msg, default = None):
+import asyncio
+import concurrent.futures
+
+async def n_b_input(msg = None, default = None):
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, n_input, msg, default)
+    return result
+
+
+def n_input(msg = None, default = None):
     if not (default is None):
         print(msg + str(default))
         return default
-    
+    elif msg is None and default is None:
+        return input()
     return input(msg)
 
 import os
-
+os.system("clear")
 
 async def main():
-    print("================================== next_list ==================================")
     print("Привет это игра блек джек!")
-    v = int(n_input("Создать комнату/присоединиться? [0/1]: ", 0))
+    v = int(n_input("Создать комнату/присоединиться? [0/1]: "))
     
     async with websockets.connect(BASE_URI) as ws:
-        game = BaseGameBJ(ws)
+        game = BaseGameBJ(ws, 1)
         await game.connect()
         
-        if v:
+        if not v:
             await game.create_new_round()
         else:
             await game.find_old_round()
         
-        print("================================== next_list ==================================")
+        await game.check_wait_players()
+        await asyncio.sleep(0.1)
         
         while True:
-
-            
+            await game.process_input_command(processor=n_b_input)
             await asyncio.sleep(0.1)
-
 
 
 asyncio.run(main())

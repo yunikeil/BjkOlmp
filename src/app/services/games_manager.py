@@ -25,9 +25,11 @@ def generate_name():
     for i in range(length):
         if i == 0:
             name += random.choice(vowels + consonants)
+        
         else:
             if name[-1] in vowels:
                 name += random.choice(consonants)
+            
             else:
                 name += random.choice(vowels)
 
@@ -62,6 +64,7 @@ class GameConnectionManager:
     ):
         if not publick_name:
             publick_name = generate_name()
+        
         player = bj_core.RoundPlayer(publick_name)
         return ConnectionContext(websocket, player, ws_type), self
 
@@ -82,7 +85,7 @@ class GameConnectionManager:
     async def connect(self, conn_context: ConnectionContext):
         await conn_context.websocket.accept()
         self.ws_connections[conn_context.player.id] = conn_context.websocket
-        await self.send_event("base_game_data_update", {"player_id": conn_context.player.id}, conn_context.websocket)
+        await self.send_event("base_game_data_update", {"player_id": conn_context.player.id, "my_name": conn_context.player.publick_name}, conn_context.websocket)
     
     async def disconnect(self, conn_context: ConnectionContext):
         del self.ws_connections[conn_context.player.id]
@@ -96,6 +99,7 @@ class GameConnectionManager:
             if len(players) == 0:
                 del self.rooms[room]
                 return
+            
             else:
                 await self.broadcast(players, "users_update", {"disconnected": conn_context.player.publick_name})
 
@@ -109,49 +113,92 @@ class GameConnectionManager:
             if not room.is_need_player():
                 continue
             
-            room.add_player(player)
+            room_json = room.to_dict()
+            await self.send_event("game_data_update", room_json, self.ws_connections[player.id])
             await self.broadcast(players, "users_update", {"connected": player.publick_name})
+            room.add_player(player)
             self.rooms[room].add(player.id)
             return room.id
     
-    def __create_room(self, player: bj_core.RoundPlayer, max_players: int = 1):
+    async def __create_room(self, player: bj_core.RoundPlayer, max_players: int = 1):
         """
         Создаёт новую игру
         """
         new_room = bj_core.GameRoom(max_players)
         new_room.add_player(player)
         self.rooms[new_room] = {player.id}
-        return new_room.id
-      
-    
+        
+        await self.send_event("base_game_data_update", {"room_id": new_room.id}, self.ws_connections[player.id])
+
     async def __process_find_game(self, data: dict, conn_context: ConnectionContext):
         game_type: Literal["new", "old"] = data.get("game_type")
-        match game_type:
-            case "new":
-                max_players = data.get("max_players")
-                room_id = self.__create_room(conn_context.player, max_players)
-            case "old":
-                room_id = await self.__find_opened_room(conn_context.player)
-                if not room_id:
-                    max_players = data.get("max_players", 2)
-                    room_id = self.__create_room(conn_context.player, max_players)
-        
-        await self.send_event("base_game_data_update", {"room_id": room_id}, conn_context.websocket)
-    
-    async def __process_start_game(self, conn_context: ConnectionContext):       
+        if game_type == "new":
+            max_players = data.get("max_players")
+            await self.__create_room(conn_context.player, max_players)
+            
+        elif game_type == "old":
+            room_id = await self.__find_opened_room(conn_context.player)
+            if not room_id:
+                max_players = data.get("max_players", 2)
+                await self.__create_room(conn_context.player, max_players)
+            
+    async def __process_start_game(self, data: dict, conn_context: ConnectionContext):       
         for room, players in self.rooms.items():
             if conn_context.player.id not in players:
                 continue
             
             room.start_game()
-            await self.broadcast(players, "base_game_data_update", {"is_started": True})
+            await self.broadcast(players, "base_game_data_update", {"is_started": True, "accepted_methods": ["do_deal"]})
             break
+    
+    async def __process_do_deal(self, data: dict, conn_context: ConnectionContext):
+        for room, players in self.rooms.items():
+            if conn_context.player.id not in players:
+                continue
+            
+            bet = int(data.get("bet"))
+            room.do_deal(conn_context.player, bet)
+            await self.send_event("base_game_data_update", {"accepted_methods": ["do_stand", "do_double", "do_hit"]}, conn_context.websocket)
+            # draw event rewrite
+            # ! TODO add do deal, now only create_bet processing
+            await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict(), "draw_event": f"{conn_context.player.publick_name} сделал ставку!"})
+            
+            ...
+        ...
+    
+    async def __process_do_stand(self, data: dict, conn_context: ConnectionContext):
+        for room, players in self.rooms.items():
+            if conn_context.player.id not in players:
+                continue
+            
+            ...     
+        ...
+
+    async def __process_do_double(self, data: dict, conn_context: ConnectionContext):
+        for room, players in self.rooms.items():
+            if conn_context.player.id not in players:
+                continue
+            
+            ...     
+        ...
+
+    async def __process_do_hit(self, data: dict, conn_context: ConnectionContext):
+        for room, players in self.rooms.items():
+            if conn_context.player.id not in players:
+                continue
+            
+            ...     
+        ...
         
     async def __process_event_type(
         self,
         event: Literal[
             "find_game",
-            "start_game"
+            "start_game",
+            "do_deal",
+            "do_stand",
+            "do_double",
+            "do_hit",
         ],
         data: dict,
         conn_context: ConnectionContext
@@ -160,8 +207,16 @@ class GameConnectionManager:
             case "find_game":
                 await self.__process_find_game(data, conn_context)
             case "start_game":
-                await self.__process_start_game(conn_context)
-   
+                await self.__process_start_game(data, conn_context)
+            case "do_deal":
+                await self.__process_do_deal(data, conn_context)
+            case "do_stand":
+                await self.__process_do_stand(data, conn_context)
+            case "do_double":
+                await self.__process_do_double(data, conn_context)
+            case "do_hit":
+                await self.__process_do_hit(data, conn_context)
+            
     async def listen_event(
         self, conn_context: ConnectionContext
     ):
