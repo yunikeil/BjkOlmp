@@ -74,11 +74,12 @@ class GameConnectionManager:
         await self.disconnect(conn_context)
         raise WebSocketException(code, reason)
 
-    async def send_event(self, event_type: str, data: dict, websocket: WebSocket):
+    async def send_event(self, event_type: str, data: dict, websocket: WebSocket, need_draw: bool = True):
         await websocket.send_json(
             {
                 "event": event_type,
                 "data": data,
+                "need_draw": need_draw,
             }
         )
            
@@ -158,11 +159,14 @@ class GameConnectionManager:
             
             bet = int(data.get("bet"))
             room.do_deal(conn_context.player, bet)
-            await self.send_event("base_game_data_update", {"accepted_methods": ["do_stand", "do_double", "do_hit"]}, conn_context.websocket)
-            # draw event rewrite
-            # ! TODO add do deal, now only create_bet processing
-            await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict(), "draw_event": f"{conn_context.player.publick_name} сделал ставку!"})
-            
+            dealer = room.if_all_with_cards_add_cards_to_dealer()
+                        
+            await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
+            if dealer:
+                # Добавить отправку нескольких ивентов за раз
+                await self.send_event("base_game_data_update", {"accepted_methods": ["do_stand", "do_double", "do_hit"]}, conn_context.websocket)
+                await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
+
             ...
         ...
     
@@ -171,7 +175,8 @@ class GameConnectionManager:
             if conn_context.player.id not in players:
                 continue
             
-            ...     
+            
+            ...
         ...
 
     async def __process_do_double(self, data: dict, conn_context: ConnectionContext):
@@ -227,10 +232,10 @@ class GameConnectionManager:
         
         await self.__process_event_type(event_type, data, conn_context)
         
-    async def broadcast(self, clients_ids: list[int], event_type: str, data: dict):
+    async def broadcast(self, clients_ids: list[int], event_type: str, data: dict, need_draw: bool = True):
         try:
             for client_id in clients_ids:
-                await self.send_event(event_type, data, self.ws_connections[client_id])
+                await self.send_event(event_type, data, self.ws_connections[client_id], need_draw)
         except asyncio.exceptions.CancelledError:
             pass
         

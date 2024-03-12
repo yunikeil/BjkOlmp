@@ -109,12 +109,15 @@ class Card:
             data.get("suit")
         )
 
-    def draw(self):
+    def to_text(self):
         weight = self.weight if self.weight == "10" else self.weight[0]
-        print(VIEW_CARD.format(
+        return VIEW_CARD.format(
             weight=weight, weight_=REVERS_WEIGHT[weight], suit=CARDS_SUITS[self.suit]
-        ))
+        )
 
+    def draw(self):
+        print(self.to_text())
+    
     @staticmethod
     def draw_hidden():
         print(HIDDEN_CARD)
@@ -155,15 +158,60 @@ class Player:
         """
         for card in cards:
             self.cards.append(card)
-            
-    def draw(self, is_started: bool):
+    
+    def get_points(self, limit: int = 21) -> int:
+        """
+        Возвращает количество очков игрока
+        """
+        """
+        Не лучшее, но довольно простое решение
+         к примеру улучшить можно добавив if points >= 11
+         однако в таком случае пропадёт возможность менять
+         вес остальных карт
+        Непонятно по заданию в каком случае туз становится 1
+        Если перебор случился по его вине или в любом случае
+        Я реализовал так, что туз становиться 1 при переборе в любом из случаев
+        Вообще тем, кто писал эти задания отдельный привет, чтоб у вас все заказчики так ТЗ писали
+        В попытках найти информацию в сети интернет найдено было целое ничего.
+        В поисках экспертного мнения был обнаружен знакомый, проигравший 400кР в казино
+        К сожалению он решил оставить данный вопрос без комментариев.
+        """
+
+        points = 0
+        for card in self.cards:
+            points += CARDS_WEIGHT[card.weight][0]
+        if points <= limit:
+            return points
+
+        points = 0
+        for card in self.cards:
+            points += CARDS_WEIGHT[card.weight][1]
+
+        return points
+
+    def cards_to_text(self, need_hidden: bool = False):
+        """
+        Преобразует массив карт в линейную строку для вывода
+        """
+        card_lines = [*[card.to_text().splitlines() for card in self.cards]]
+        if need_hidden:
+            card_lines = [*[HIDDEN_CARD.splitlines()], *card_lines[1:]]
+
+        max_lines = max(len(lines) for lines in card_lines)
+        padded_lines = [lines + [""] * (max_lines - len(lines)) for lines in card_lines]
+        transposed_lines = list(zip(*padded_lines))
+        return "\n".join("".join(line for line in lines) for lines in transposed_lines)
+
+    def draw_cards(self, need_hidder: bool = False):
+        print(self.cards_to_text(need_hidder))
+                    
+    def draw(self, is_started: bool, is_dealer: bool = False):
         print(f"Имя: {'Me(' if self.is_me else ''}{self.publick_name}{')' if self.is_me else ''}")
         print(f"Текущая ставка: {self.bet}")
         print(f"Текущий банк: {self.bank}")
         print(f"Кол-во карт: {len(self.cards) if self.cards else 0}")
         if is_started and self.cards:
-            for card in self.cards:
-                card.draw()
+            self.draw_cards(True if (is_started and is_dealer) else False)
 
 
 # python src/__public/clients/ws_python.py
@@ -181,7 +229,7 @@ class BaseGameBJ:
 
         # users_update   # user_update
         self.players: list[Player] = []
-        self.dealer: Player = Player(-1, -1, "DealerBoss")
+        self.dealer: Player = Player(None, None, "DealerBoss")
         
         self.all_server_methods: dict = {
             "do_deal": [self.do_deal],
@@ -233,7 +281,14 @@ class BaseGameBJ:
             await self.check_wait_players()
             
         return draw_event
-            
+    
+    async def __process_dealer_update(self, data: dict):
+        print("DEALEEEEEEEEEED999999999999999999999")
+        dealer_data = data.get("dealer_data")
+        print(dealer_data)
+        self.dealer.update_from_json(dealer_data)
+
+                    
     async def __process_base_game_data_update(self, data: dict):
         print("    |data| base_game_data_update", data)
         for key, value in data.items():
@@ -249,6 +304,8 @@ class BaseGameBJ:
         self.is_started = data.get("is_started")
         
     async def __process_event_type(self, event: str, data: dict):
+        draw_event = None
+        
         match event:
             case "game_data_update":
                 # Полное обновление всех полей
@@ -258,6 +315,8 @@ class BaseGameBJ:
                 # Обновление юзеров 
                 # Происходит когда в комнату кто-либо заходит или выходит
                 draw_event = await self.__process_users_update(data)
+            case "dealer_update":
+                draw_event = await self.__process_dealer_update(data)
             case "base_game_data_update":
                 # Частичное заполнение полей например 
                 # при первичном подключении к серверу
@@ -265,15 +324,19 @@ class BaseGameBJ:
                 # или при начале игры (is_started)
                 draw_event = await self.__process_base_game_data_update(data)
         
-        await self.draw_game(draw_event)
+        return draw_event
 
     async def __start_listen_ws_events(self):
         while True:
             server_data = await self.__receive_json()
             event_type = server_data.get("event")
             data = server_data.get("data")
+            need_draw = server_data.get("need_draw", True)
+                        
+            draw_event = await self.__process_event_type(event_type, data)
             
-            await self.__process_event_type(event_type, data)
+            if need_draw:
+                await self.draw_game(draw_event)
 
     async def connect(self):
         conn_data: dict = (await self.__receive_json()).get("data")
@@ -351,6 +414,7 @@ class BaseGameBJ:
         )
     
     async def check_wait_players(self):
+        # TODO Перенести на сторону сервера
         if len(self.players) == self.max_players:
             await self.start_game()
     
@@ -394,7 +458,7 @@ class BaseGameBJ:
             print("Игра идёт!")
             print("Игроков в лобби:", len(self.players))
             print("Диллер: ")
-            self.dealer.draw(self.is_started)
+            self.dealer.draw(self.is_started, True)
             for player in self.players:
                 print("------------")
                 player.draw(self.is_started)

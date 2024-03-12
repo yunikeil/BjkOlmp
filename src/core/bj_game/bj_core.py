@@ -88,7 +88,7 @@ class Card:
         return HIDDEN_CARD
 
 
-class HumanBaseBJ:
+class BasePlayer:
     def __init__(self) -> None:
         self._cards: list[Card] = []
 
@@ -143,7 +143,7 @@ class HumanBaseBJ:
         return "\n".join("".join(line for line in lines) for lines in transposed_lines)
 
 
-class RoundPlayer(HumanBaseBJ):
+class RoundPlayer(BasePlayer):
     """
     Класс отвечающий за игрока
     """
@@ -187,13 +187,18 @@ class RoundPlayer(HumanBaseBJ):
         return super().cards_to_text(need_hidden=False)
 
 
-class RoundDealer(HumanBaseBJ):
+class RoundDealer(BasePlayer):
     """
     Класс отвечающий за диллера
     """
+    def __init__(self, publick_name: str) -> None:
+        self.publick_name: str = publick_name
+        
+        super().__init__()
+
 
     def to_dict(self):
-        return {"cards": [card.to_dict() for card in self._cards]}
+        return {"cards": [card.to_dict() for card in self._cards],  "publick_name": self.publick_name,}
 
     def cards_to_text(self, need_hidden: bool = True):
         return super().cards_to_text(need_hidden=need_hidden)
@@ -207,7 +212,7 @@ class GameRoom:
 
         self.__max_players: int = max_players
         self.__players: list[RoundPlayer] = []
-        self.__dealer: RoundDealer = RoundPlayer("DealerBoss")
+        self.__dealer: RoundDealer = RoundDealer("DealerBoss")
         self.is_started: bool = False
         self.id: str = uuid.uuid4().hex
 
@@ -296,12 +301,19 @@ class GameRoom:
         """
 
         ...
+    
+    def if_all_with_cards_add_cards_to_dealer(self):
+        for player in self.__players:
+            if len(player._cards) < 1:
+                return
+        
+        self.__dealer.add_cards(self.__get_random_cards(2))
+        return self.__dealer
 
-    def do_deal(self, player: RoundPlayer, bet: int) -> tuple:
-        # Делаем ставку (1)
+    def do_deal(self, player: RoundPlayer, bet: int):
+        # Делаем ставку, с получением карт (1)
         player._create_bet(bet)
-
-        ...
+        player.add_cards(self.__get_random_cards(2))
 
     def do_stand(self, player: RoundPlayer) -> bool:
         # Игрок завершает раунд оставляет текущее кол-во очков
