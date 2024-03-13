@@ -162,9 +162,10 @@ class GameConnectionManager:
             dealer = room.if_all_with_cards_add_cards_to_dealer()
                         
             await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
+            await self.send_event("base_game_data_update", {"accepted_methods": ["do_stand", "do_double", "do_hit"]}, conn_context.websocket)
+
             if dealer:
                 # Добавить отправку нескольких ивентов за раз
-                await self.send_event("base_game_data_update", {"accepted_methods": ["do_stand", "do_double", "do_hit"]}, conn_context.websocket)
                 await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
 
             ...
@@ -175,7 +176,16 @@ class GameConnectionManager:
             if conn_context.player.id not in players:
                 continue
             
+            room.do_stand(conn_context.player)
+            await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
+            await self.send_event("base_game_data_update", {"accepted_methods": []}, conn_context.websocket)
             
+            dealer = room.check_is_all_players_standed()
+            if dealer:
+                await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
+                await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
+            
+            # Run check is game finished
             ...
         ...
 
@@ -184,6 +194,17 @@ class GameConnectionManager:
             if conn_context.player.id not in players:
                 continue
             
+            is_move_over = room.do_double(conn_context.player)
+            if is_move_over:
+                await self.send_event("base_game_data_update", {"accepted_methods": []}, conn_context.websocket)
+            await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
+            
+            dealer = room.check_is_all_players_standed()
+            if dealer:
+                await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
+                await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
+
+
             ...     
         ...
 
@@ -192,6 +213,16 @@ class GameConnectionManager:
             if conn_context.player.id not in players:
                 continue
             
+            is_move_over = room.do_hit(conn_context.player)
+            if is_move_over:
+                await self.send_event("base_game_data_update", {"accepted_methods": []}, conn_context.websocket)
+            await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
+
+            dealer = room.check_is_all_players_standed()
+            if dealer:
+                await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
+                await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
+
             ...     
         ...
         

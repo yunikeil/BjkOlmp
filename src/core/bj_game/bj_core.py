@@ -151,6 +151,7 @@ class RoundPlayer(BasePlayer):
     def __init__(self, publick_name: str) -> None:
         self.__gamer_bank = 5000
         self.__current__bet: int = -1
+        self.is_move_over = False
         self.publick_name: str = publick_name
         self.id: str = uuid.uuid4().hex
 
@@ -161,6 +162,7 @@ class RoundPlayer(BasePlayer):
             "cards": [card.to_dict() for card in self._cards],
             "gamer_bank": self.__gamer_bank,
             "current_bet": self.__current__bet,
+            "is_move_over": self.is_move_over,
             "publick_name": self.publick_name,
         }
 
@@ -180,6 +182,12 @@ class RoundPlayer(BasePlayer):
         if self.__gamer_bank < self.__current__bet:
             raise ValueError("Нехватка денег на счёте")
 
+        if len(self._cards) > 2:
+            raise ValueError("Удвоить можно только в начале раунда")
+
+        if self.is_move_over:
+            raise ValueError("Ход был закончен")
+                
         self.__gamer_bank -= self.__current__bet
         self.__current__bet *= 2
 
@@ -193,12 +201,13 @@ class RoundDealer(BasePlayer):
     """
     def __init__(self, publick_name: str) -> None:
         self.publick_name: str = publick_name
-        
+        self.is_move_over = False
+
         super().__init__()
 
 
     def to_dict(self):
-        return {"cards": [card.to_dict() for card in self._cards],  "publick_name": self.publick_name,}
+        return {"cards": [card.to_dict() for card in self._cards],  "publick_name": self.publick_name, "is_move_over": self.is_move_over}
 
     def cards_to_text(self, need_hidden: bool = True):
         return super().cards_to_text(need_hidden=need_hidden)
@@ -213,6 +222,7 @@ class GameRoom:
         self.__max_players: int = max_players
         self.__players: list[RoundPlayer] = []
         self.__dealer: RoundDealer = RoundDealer("DealerBoss")
+        self.is_round_finished: bool = False
         self.is_started: bool = False
         self.id: str = uuid.uuid4().hex
 
@@ -264,10 +274,6 @@ class GameRoom:
 
         return cards
 
-    def _end_current_round(self):
-
-        ...
-
     def _calculate_payment(
         self,
         situation: Literal[
@@ -314,20 +320,48 @@ class GameRoom:
         # Делаем ставку, с получением карт (1)
         player._create_bet(bet)
         player.add_cards(self.__get_random_cards(2))
+        
+        if player.get_points() >= 21:
+            player.is_move_over = True
+
+        
 
     def do_stand(self, player: RoundPlayer) -> bool:
         # Игрок завершает раунд оставляет текущее кол-во очков
         # Диллер добавляет себе карты пока ещё счёт не станет больше 16
+        player.is_move_over = True
         
-        ...
 
-    def do_double(self, player: RoundPlayer):
+    def do_double(self, player: RoundPlayer) -> bool:
         # Игрок удваивает ставку с запросом новой карты
         # Работает только после превого хода
         player._double_bet()
+        player.add_cards(self.__get_random_cards())
         
-
+        if player.get_points() >= 21:
+            player.is_move_over = True
+            return True
+        
+        return False
+        
     def do_hit(self, player: RoundPlayer):
         # Игрок просит новую карту, можно делать пока не будет > 21
+        player.add_cards(self.__get_random_cards())
         
-        ...
+        if player.get_points() >= 21:
+            player.is_move_over = True
+            return True
+        
+        return False
+    
+    def check_is_all_players_standed(self):
+        for player in self.__players:
+            if not player.is_move_over:
+                return False
+        
+        self.__dealer.is_move_over = True
+        while self.__dealer.get_points() < 17:
+            self.__dealer.add_cards(self.__get_random_cards())
+        
+        self.is_round_finished = True
+        return self.__dealer

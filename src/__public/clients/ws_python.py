@@ -130,6 +130,7 @@ class Player:
     publick_name: str
     is_me: bool = None
     cards: list[Card] = None
+    is_move_over: bool = False
     
     @staticmethod
     def from_json(data: dict) -> "Player":
@@ -141,12 +142,14 @@ class Player:
             data.get("gamer_bank"),
             data.get("current_bet"),
             data.get("publick_name"),
+            data.get("is_move_over"),
             cards
         )
     
     def update_from_json(self, data: dict):
         self.bank = data.get("gamer_bank")
         self.bet = data.get("current_bet")
+        self.is_move_over = data.get("is_move_over")
         
         self.cards = []
         for card_json in data.get("cards", []):
@@ -209,9 +212,12 @@ class Player:
         print(f"Имя: {'Me(' if self.is_me else ''}{self.publick_name}{')' if self.is_me else ''}")
         print(f"Текущая ставка: {self.bet}")
         print(f"Текущий банк: {self.bank}")
+        print(f"Закончил ли ход: {self.is_move_over}")
+        if ((not is_dealer) or self.is_move_over) and self.cards:
+            print(f"Количество очков {self.get_points()}")
         print(f"Кол-во карт: {len(self.cards) if self.cards else 0}")
         if is_started and self.cards:
-            self.draw_cards(True if (is_started and is_dealer) else False)
+            self.draw_cards(True if (is_started and is_dealer and not self.is_move_over) else False)
 
 
 # python src/__public/clients/ws_python.py
@@ -223,7 +229,8 @@ class BaseGameBJ:
         self.queue_inputs: list[str] = []
         
         # base game data
-        self.is_started: bool = False
+        self.is_round_finished: bool = False
+        self.is_started: bool = False # (Game)
         self.max_players: int = max_players
         self.ws_id = None
 
@@ -283,9 +290,9 @@ class BaseGameBJ:
         return draw_event
     
     async def __process_dealer_update(self, data: dict):
-        print("DEALEEEEEEEEEED999999999999999999999")
+        print("    |data| dealer_update", data)   
+
         dealer_data = data.get("dealer_data")
-        print(dealer_data)
         self.dealer.update_from_json(dealer_data)
 
                     
@@ -309,7 +316,7 @@ class BaseGameBJ:
         match event:
             case "game_data_update":
                 # Полное обновление всех полей
-                # Происходит когда клиент ПРИСОЕДИНЯЕТСЯ к комнате
+                # Происходит когда клиент (1) ПРИСОЕДИНЯЕТСЯ к комнате
                 draw_event = await self._process_game_data_update(data)
             case "users_update":
                 # Обновление юзеров 
@@ -422,6 +429,9 @@ class BaseGameBJ:
         if not self.is_started:
             return
 
+        if not self.accepted_methods:
+            return
+        
         if not question:
             pre_q = "Разрешенные действия: \n" + str(self.accepted_methods) + "\nВыберите индекс нужного действия: "
             print(pre_q)
@@ -449,6 +459,8 @@ class BaseGameBJ:
             for player in self.players:
                 print("------------")
                 player.draw(self.is_started)
+        elif self.is_round_finished:
+            print("Раунд закончен. Результаты: ...")
                 
         elif self.is_started:
             if draw_event:
