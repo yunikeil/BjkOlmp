@@ -349,8 +349,6 @@ class GameRoom:
             print()
 
 
-
-        ...
     
     def if_all_with_cards_add_cards_to_dealer(self):
         for player in self.__players:
@@ -367,6 +365,9 @@ class GameRoom:
         
         if player.get_points() >= 21:
             player.is_move_over = True
+            return True
+        
+        return False
 
     def do_stand(self, player: RoundPlayer) -> bool:
         # Игрок завершает раунд оставляет текущее кол-во очков

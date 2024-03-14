@@ -152,11 +152,7 @@ class Player:
     def update_from_json(self, data: dict):
         self.bank = data.get("gamer_bank")
         self.bet = data.get("current_bet")
-        
-        
-        print("DAAAAAAAAAAAAAAAAAAAAAATA")
-        print(data)
-        
+                
         self.is_move_over = data.get("is_move_over")
         self.loose_points = data.get("loose_points"),
         self.win_points = data.get("win_points"),
@@ -272,7 +268,6 @@ class BaseGameBJ:
     
     async def __receive_json(self) -> dict:
         data = json.loads(await self.server.recv())
-        await asyncio.sleep(0)
         return data
 
     def find_player(self, publick_name):
@@ -319,6 +314,7 @@ class BaseGameBJ:
             setattr(self, key, value)
             
     async def _process_game_data_update(self, data: dict):
+        print("    |data| game_data_update", data)
         self.max_players = data.get("max_players")
         for player_json in data.get("players", []):
             pl = Player.from_json(player_json)
@@ -327,43 +323,41 @@ class BaseGameBJ:
         self.dealer = Player.from_json(data.get("dealer"))
         self.is_started = data.get("is_started")
                     
-    async def __process_event_type(self, event: str, data: dict):
-        draw_event = None
-        
+    async def __process_event_type(self, event: str, data: dict):       
         match event:
             case "game_data_update":
                 # Полное обновление всех полей
                 # Происходит когда клиент (1) ПРИСОЕДИНЯЕТСЯ к комнате
-                draw_event = await self._process_game_data_update(data)
+                await self._process_game_data_update(data)
             case "users_update":
                 # Обновление юзеров 
                 # Происходит когда в комнату кто-либо заходит или выходит
-                draw_event = await self.__process_users_update(data)
+                await self.__process_users_update(data)
             case "dealer_update":
-                draw_event = await self.__process_dealer_update(data)
+                await self.__process_dealer_update(data)
             case "base_game_data_update":
                 # Частичное заполнение полей например 
                 # при первичном подключении к серверу
                 # или при СОЗДАНИИ новой комнаты
                 # или при начале игры (is_started)
-                draw_event = await self.__process_base_game_data_update(data)
+                await self.__process_base_game_data_update(data)
         
-        return draw_event
 
     async def __start_listen_ws_events(self):
         while True:
             server_data = await self.__receive_json()
-            event_type = server_data.get("event")
-            data = server_data.get("data")
-            need_draw = server_data.get("need_draw", True)
+            server_dict: list[dict] = server_data.get("events")
+            draw_event = server_data.get("draw_event", None)
+            for event_data in server_dict:
+                event_type = event_data.get("event_type")
+                data = event_data.get("data")
+                                                            
+                await self.__process_event_type(event_type, data)
                         
-            draw_event = await self.__process_event_type(event_type, data)
-            
-            if need_draw:
-                await self.draw_game(draw_event)
+            await self.draw_game(draw_event)
 
     async def connect(self):
-        conn_data: dict = (await self.__receive_json()).get("data")
+        conn_data: dict = (await self.__receive_json())["events"][0]["data"]
         self.ws_id = conn_data.get("player_id")
         self.players.append(Player(bank=5000, bet=-1, publick_name=conn_data.get("my_name"), is_me=True))
         asyncio.gather(self.__start_listen_ws_events())
@@ -470,12 +464,16 @@ class BaseGameBJ:
     async def draw_game(self, draw_event: dict = {}):
         print()
         print("================================== next_list ==================================")#os.system("clear")
+        if draw_event:
+            print(draw_event)
+
         if not self.is_started:
             print("Ожидание игроков...")
             print("Игроков в лобби:", len(self.players))
             for player in self.players:
                 print("------------")
                 player.draw(self.is_started)
+                
         elif self.is_round_finished:
             print("Раунд закончен. Результаты:")
             print("Диллер: ")
@@ -484,13 +482,8 @@ class BaseGameBJ:
                 print("------------")
                 player.draw(self.is_started, False, True)
             print("------------")
-
                 
-        elif self.is_started:
-            if draw_event:
-                if nm := draw_event.get("disconnected"):
-                    print(f"Кажется {nm} покинул игру, печально!")
-            
+        elif self.is_started:            
             print("Игра идёт!")
             print("Игроков в лобби:", len(self.players))
             print("Диллер: ")
