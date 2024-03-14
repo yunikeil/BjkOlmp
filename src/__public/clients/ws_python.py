@@ -99,28 +99,28 @@ def async_exit_handler(func):
 
 @dataclass
 class Card:
-    weight: str
-    suit: str
+    weight: CardNumber
+    suit: CardSuit
 
     @staticmethod
     def from_json(data: dict) -> "Card":
-        return Card(
-            data.get("weight"),
-            data.get("suit")
-        )
+        return Card(**data)
 
     def to_text(self):
         weight = self.weight if self.weight == "10" else self.weight[0]
         return VIEW_CARD.format(
             weight=weight, weight_=REVERS_WEIGHT[weight], suit=CARDS_SUITS[self.suit]
         )
+    
+    @staticmethod
+    def hidden():
+        return HIDDEN_CARD
 
     def draw(self):
         print(self.to_text())
     
-    @staticmethod
-    def draw_hidden():
-        print(HIDDEN_CARD)
+    def draw_hidden(self):
+        print(self.hidden())
 
 
 @dataclass
