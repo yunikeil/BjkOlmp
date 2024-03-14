@@ -149,6 +149,9 @@ class RoundPlayer(BasePlayer):
     """
 
     def __init__(self, publick_name: str) -> None:
+        self.loose_points: int = 0
+        self.win_points: int = 0
+        self.is_last_win: bool = False
         self.__gamer_bank = 5000
         self.__current__bet: int = -1
         self.is_move_over = False
@@ -159,12 +162,34 @@ class RoundPlayer(BasePlayer):
 
     def to_dict(self):
         return {
+            "loose_points": self.loose_points,
+            "win_points": self.win_points,
+            "is_last_win": self.is_last_win,
             "cards": [card.to_dict() for card in self._cards],
             "gamer_bank": self.__gamer_bank,
             "current_bet": self.__current__bet,
             "is_move_over": self.is_move_over,
             "publick_name": self.publick_name,
         }
+    
+    def lose_bet(self):
+        # Проигрышь
+        self.is_last_win = False
+        self.loose_points += self.__current__bet
+        self.__current__bet = 0
+    
+    def win_bet(self):
+        # Победа
+        self.is_last_win = True
+        self.win_points += self.__current__bet
+        self.__gamer_bank += self.__current__bet
+        self.__current__bet = 0
+    
+    def draw_bet(self):
+        # Ничья
+        self.is_last_win = None
+        self.__gamer_bank += self.__current__bet
+        self.__current__bet = 0
 
     def _create_bet(self, bet: int):
         bet = abs(bet)
@@ -221,6 +246,7 @@ class GameRoom:
 
         self.__max_players: int = max_players
         self.__players: list[RoundPlayer] = []
+        self.results: dict[str, str] = {}
         self.__dealer: RoundDealer = RoundDealer("DealerBoss")
         self.is_round_finished: bool = False
         self.is_started: bool = False
@@ -274,23 +300,7 @@ class GameRoom:
 
         return cards
 
-    def _calculate_payment(
-        self,
-        situation: Literal[
-            "black_jack",
-            "player_bust",
-        ],
-    ):
-        """
-        # Сначала все игроки должны завершить ход далее идёт подсчёт
-        player_jack - игрок получает 1.5 его ставки
-        dealer_jack - все у кого не black_jack теряют ставки
-        player_bust - игрок теряет ставку
-        """
-
-        ...
-
-    def _calculate_status(self):
+    def _calculate_payments(self):
         """
         Простейшая проверка, можно усложнить, добавив полный свод правил
         К примеру проверка на то выпал ли туз у диллера для более верного
@@ -305,6 +315,40 @@ class GameRoom:
          либо взять выигрыш 1 к 1 (только если первая карта дилера — туз), либо дождаться
          окончания конца игры (и в случае, если у дилера не блек-джек, получить выигрыш 3 к 2).
         """
+        # Предполагаем, что у нас есть метод get_dealer_points для получения очков дилера
+        dealer_points = self.__dealer.get_points()
+                
+        for player in self.__players:
+            player_points = player.get_points()
+            
+            if player_points > 21:
+                player.lose_bet()
+                print(f"{player.publick_name} lose")
+                
+            elif dealer_points > 21:
+                player.win_bet()
+                print(f"{player.publick_name} win")
+
+            elif player_points > dealer_points:
+                player.win_bet()
+                print(f"{player.publick_name} win")
+
+                
+            elif player_points < dealer_points:
+                player.lose_bet()
+                print(f"{player.publick_name} lose")
+                
+            else:
+                player.draw_bet()
+                print(f"{player.publick_name} draw")
+            
+            print("prin is win", player.is_last_win)
+            print("win points", player.win_points)
+            print("loose points", player.loose_points)
+            print()
+            print()
+
+
 
         ...
     
@@ -324,13 +368,10 @@ class GameRoom:
         if player.get_points() >= 21:
             player.is_move_over = True
 
-        
-
     def do_stand(self, player: RoundPlayer) -> bool:
         # Игрок завершает раунд оставляет текущее кол-во очков
         # Диллер добавляет себе карты пока ещё счёт не станет больше 16
         player.is_move_over = True
-        
 
     def do_double(self, player: RoundPlayer) -> bool:
         # Игрок удваивает ставку с запросом новой карты
@@ -364,4 +405,7 @@ class GameRoom:
             self.__dealer.add_cards(self.__get_random_cards())
         
         self.is_round_finished = True
+        
+        self._calculate_payments()
+        
         return self.__dealer

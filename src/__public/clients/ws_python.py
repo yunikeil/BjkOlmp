@@ -128,10 +128,13 @@ class Player:
     bank: int
     bet: int
     publick_name: str
-    is_me: bool = None
-    cards: list[Card] = None
     is_move_over: bool = False
-    
+    cards: list[Card] = None
+    loose_points: int = None
+    win_points: int = None
+    is_last_win: bool | None = None
+    is_me: bool = None
+
     @staticmethod
     def from_json(data: dict) -> "Player":
         cards = []
@@ -139,18 +142,26 @@ class Player:
             cards.append(Card.from_json(card_json))
             
         return Player(
-            data.get("gamer_bank"),
-            data.get("current_bet"),
-            data.get("publick_name"),
-            data.get("is_move_over"),
-            cards
+            bank = data.get("gamer_bank"),
+            bet = data.get("current_bet"),
+            publick_name = data.get("publick_name"),
+            is_move_over = data.get("is_move_over"),
+            cards = cards,
         )
     
     def update_from_json(self, data: dict):
         self.bank = data.get("gamer_bank")
         self.bet = data.get("current_bet")
-        self.is_move_over = data.get("is_move_over")
         
+        
+        print("DAAAAAAAAAAAAAAAAAAAAAATA")
+        print(data)
+        
+        self.is_move_over = data.get("is_move_over")
+        self.loose_points = data.get("loose_points"),
+        self.win_points = data.get("win_points"),
+        self.is_last_win = data.get("is_last_win"),
+
         self.cards = []
         for card_json in data.get("cards", []):
             self.cards.append(Card.from_json(card_json))
@@ -208,10 +219,16 @@ class Player:
     def draw_cards(self, need_hidder: bool = False):
         print(self.cards_to_text(need_hidder))
                     
-    def draw(self, is_started: bool, is_dealer: bool = False):
+    def draw(self, is_started: bool, is_dealer: bool = False, is_result: bool = False):
         print(f"Имя: {'Me(' if self.is_me else ''}{self.publick_name}{')' if self.is_me else ''}")
         print(f"Текущая ставка: {self.bet}")
         print(f"Текущий банк: {self.bank}")
+        if is_result:
+            print(f"Выиграл всего: {self.win_points}")
+            print(f"Проиграл всего: {self.loose_points}")
+            print(f"Выиграл ли сейчас: {self.is_last_win}")
+            return
+
         print(f"Закончил ли ход: {self.is_move_over}")
         if ((not is_dealer) or self.is_move_over) and self.cards:
             print(f"Количество очков {self.get_points()}")
@@ -236,7 +253,7 @@ class BaseGameBJ:
 
         # users_update   # user_update
         self.players: list[Player] = []
-        self.dealer: Player = Player(None, None, "DealerBoss")
+        self.dealer: Player = Player(bank=None, bet=None, publick_name="DealerBoss")
         
         self.all_server_methods: dict = {
             "do_deal": [self.do_deal],
@@ -268,7 +285,7 @@ class BaseGameBJ:
         
         draw_event = None
         if player_name := data.get("connected", False):
-            self.players.append(Player(5000, -1, player_name, False))
+            self.players.append(Player(bank=5000, bet=-1, publick_name=player_name, is_move_over=False))
             draw_event = data
         
         elif player_name := data.get("disconnected", False):
@@ -309,7 +326,7 @@ class BaseGameBJ:
         
         self.dealer = Player.from_json(data.get("dealer"))
         self.is_started = data.get("is_started")
-        
+                    
     async def __process_event_type(self, event: str, data: dict):
         draw_event = None
         
@@ -348,7 +365,7 @@ class BaseGameBJ:
     async def connect(self):
         conn_data: dict = (await self.__receive_json()).get("data")
         self.ws_id = conn_data.get("player_id")
-        self.players.append(Player(5000, -1, conn_data.get("my_name"), True))
+        self.players.append(Player(bank=5000, bet=-1, publick_name=conn_data.get("my_name"), is_me=True))
         asyncio.gather(self.__start_listen_ws_events())
         #tasks.add(t)
         
@@ -460,7 +477,14 @@ class BaseGameBJ:
                 print("------------")
                 player.draw(self.is_started)
         elif self.is_round_finished:
-            print("Раунд закончен. Результаты: ...")
+            print("Раунд закончен. Результаты:")
+            print("Диллер: ")
+            self.dealer.draw(self.is_started, True, True)
+            for player in self.players:
+                print("------------")
+                player.draw(self.is_started, False, True)
+            print("------------")
+
                 
         elif self.is_started:
             if draw_event:
@@ -510,7 +534,7 @@ async def main():
     v = int(n_input("Создать комнату/присоединиться? [0/1]: "))
     
     async with websockets.connect(BASE_URI) as ws:
-        game = BaseGameBJ(ws, 2)
+        game = BaseGameBJ(ws, 1)
         await game.connect()
         
         if not v:

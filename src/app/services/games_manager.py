@@ -47,7 +47,7 @@ class ConnectionContext:
     def unpack(self):
         return self.player, self.websocket
 
-
+# TODO если сразу выпадает 21 у игрока логика не опрабатывает запрет некст шагов
 class GameConnectionManager:
     ws_connections: dict[str, WebSocket] = {}
     rooms: dict[bj_core.GameRoom, set[str]] = {}
@@ -167,6 +167,7 @@ class GameConnectionManager:
             if dealer:
                 # Добавить отправку нескольких ивентов за раз
                 await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
+                await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
 
             ...
         ...
@@ -177,10 +178,11 @@ class GameConnectionManager:
                 continue
             
             room.do_stand(conn_context.player)
+            dealer = room.check_is_all_players_standed()
+
             await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
             await self.send_event("base_game_data_update", {"accepted_methods": []}, conn_context.websocket)
             
-            dealer = room.check_is_all_players_standed()
             if dealer:
                 await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
                 await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
@@ -195,11 +197,12 @@ class GameConnectionManager:
                 continue
             
             is_move_over = room.do_double(conn_context.player)
+            dealer = room.check_is_all_players_standed()
+
             if is_move_over:
                 await self.send_event("base_game_data_update", {"accepted_methods": []}, conn_context.websocket)
             await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
             
-            dealer = room.check_is_all_players_standed()
             if dealer:
                 await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
                 await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
@@ -210,15 +213,18 @@ class GameConnectionManager:
 
     async def __process_do_hit(self, data: dict, conn_context: ConnectionContext):
         for room, players in self.rooms.items():
+            # Ошибка вероятно заключается в том, что обновляются несколько пользователей
+            # А отправляется только один из пользователей ... 
             if conn_context.player.id not in players:
                 continue
             
             is_move_over = room.do_hit(conn_context.player)
+            dealer = room.check_is_all_players_standed()
+            
             if is_move_over:
                 await self.send_event("base_game_data_update", {"accepted_methods": []}, conn_context.websocket)
             await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
 
-            dealer = room.check_is_all_players_standed()
             if dealer:
                 await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
                 await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
