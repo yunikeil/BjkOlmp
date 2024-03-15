@@ -84,6 +84,14 @@ reset = "\033[0m"
 vars_c = [bold, red, green, blue, yellow, reset]
 
 
+def clear_screen():
+    # Checking for OS
+    if os.name == 'nt': # For Windows
+        _ = os.system('cls')
+    else: # For Linux/Unix
+        _ = os.system('clear')
+
+
 def blocking_wait(seconds: int, bar_len: int = 50, title: str = 'Пожалуйста подождите'):
     """
     Функция, для отрисовки загрузки в частности используется 
@@ -548,30 +556,30 @@ class BaseGameBJ:
         """
         listener для приходящих с сервера ивентов
         """
-        # try:
-        while True:
-            server_data = await self.__receive_json()
-            server_dict: list[dict] = server_data.get("events")
-            draw_event = server_data.get("draw_event", None)
-            for event_data in server_dict:
-                event_type = event_data.get("event_type")
-                data = event_data.get("data")
-                                                            
-                await self.__process_event_type(event_type, data)
-                        
-            await self.draw_game(draw_event)
-        # except websockets.exceptions.ConnectionClosedError:
-        #     print("\nВероятно сервер перезапускается, перезагрузите клиент\n")
-        #     exit()
-        # except websockets.exceptions.ConnectionClosedOK as e:
-        #     print("\nВыключаем клиент...\n")
-        #     raise e
-        #     exit()
-        # except asyncio.exceptions.CancelledError:
-        #     exit()
-        # except BaseException as e:
-        #     print(f"\nНеизвестная ошибка: {type(e)}, выходим из клиента...\n")
-        #     exit()
+        try:
+            while True:
+                server_data = await self.__receive_json()
+                server_dict: list[dict] = server_data.get("events")
+                draw_event = server_data.get("draw_event", None)
+                for event_data in server_dict:
+                    event_type = event_data.get("event_type")
+                    data = event_data.get("data")
+                                                                
+                    await self.__process_event_type(event_type, data)
+                            
+                await self.draw_game(draw_event)
+        except websockets.exceptions.ConnectionClosedError:
+            print("\nВероятно сервер перезапускается, перезагрузите клиент\n")
+            exit()
+        except websockets.exceptions.ConnectionClosedOK as e:
+            print("\nВыключаем клиент...\n")
+            raise e
+            exit()
+        except asyncio.exceptions.CancelledError:
+            exit()
+        except BaseException as e:
+            print(f"\nНеизвестная ошибка: {type(e)}, выходим из клиента...\n")
+            exit()
 
     async def connect(self):
         """
@@ -614,7 +622,6 @@ class BaseGameBJ:
         """
         Отправляем на сервер ивент для начала игры
         """
-        #blocking_wait(10)
         await self.__send_json(
             {
                 "event": "start_game",
@@ -700,8 +707,6 @@ class BaseGameBJ:
                 descr = self.all_server_methods[method_name][1]
                 pre_q += f"[{i}] :: {descr}\n"
             pre_q += f"Выберите требуемое действие [{0}-{len(self.accepted_methods)-1}]:"
-            # pre_q = "Разрешенные действия: \n" + str(self.accepted_methods) + "\nВыберите индекс нужного действия: "
-            # print(self.accepted_methods)
             print(pre_q, end=" ")
             self.queue_inputs.append(pre_q)
         else:
@@ -722,8 +727,7 @@ class BaseGameBJ:
         """
         Метод используемый для отрисовки класса game
         """
-        os.system("clear")
-        #print("================================== next_list ==================================")
+        clear_screen()
         if draw_event:
             print(ft(draw_event))
         
@@ -769,40 +773,6 @@ class BaseGameBJ:
         if self.queue_inputs:
             print(self.queue_inputs[-1], end=" ")
 
-        # print()
-        # print("================================== next_list ==================================")#os.system("clear")
-        # if draw_event:
-        #     print(draw_event)
-
-        # if not self.is_started:
-        #     print("Ожидание игроков...")
-        #     print("Игроков в лобби:", len(self.players))
-        #     for player in self.players:
-        #         print("------------")
-        #         player.draw(self.is_started)
-                
-        # elif self.is_round_finished:
-        #     print("Раунд закончен. Результаты:")
-        #     print("Диллер: ")
-        #     self.dealer.draw(self.is_started, True, True)
-        #     for player in self.players:
-        #         print("------------")
-        #         player.draw(self.is_started, False, True)
-        #     print("------------")
-                
-        # elif self.is_started:            
-        #     print("Игра идёт!")
-        #     print("Игроков в лобби:", len(self.players))
-        #     print("Диллер: ")
-        #     self.dealer.draw(self.is_started, True)
-        #     for player in self.players:
-        #         print("------------")
-        #         player.draw(self.is_started)
-        # print("------------")
-        
-        # if self.queue_inputs:
-        #     print(self.queue_inputs[-1])
-
 
 async def main():
     """
@@ -817,48 +787,48 @@ async def main():
     Как простейший вариант исправления, можно использовать лишь один метод обновления сразу всех данных, т.к. данные
      на клиента обновляются довольно редко, это могло бы сильно упростить как разработку так и чтение кода...
     """
-    #try:
-    os.system("clear")
-    hello_message = "Если игра неправильно отображается в консоли, попробуйте сделать её шире\n"
-    hello_message += "Базовая ширина консоли составляет около 120 символов, интерфейс рассчитан 124 символа. "
-    print(ft(hello_message))
-    print(ft("Привет это игра блек джек! Пожалуйста, выберите вариант игры ниже\n"))
-    v = int(n_input("Создать комнату/присоединиться? [0/1]:".center(BASE_CLIENT_WIDTH).rstrip() + " "))
+    try:
+        clear_screen()
+        hello_message = "Если игра неправильно отображается в консоли, попробуйте сделать её шире\n"
+        hello_message += "Базовая ширина консоли составляет около 120 символов, интерфейс рассчитан 124 символа. "
+        print(ft(hello_message))
+        print(ft("Привет это игра блек джек! Пожалуйста, выберите вариант игры ниже\n"))
+        v = int(n_input("Создать комнату/присоединиться? [0/1]:".center(BASE_CLIENT_WIDTH).rstrip() + " "))
 
-    async with websockets.connect(BASE_URI) as ws:
-        game = BaseGameBJ(ws, 2)
-        await game.connect()
-        
-        if not v:
-            await game.create_new_round()
-        else:
-            await game.find_old_round()
-        
-        await game.check_wait_players()
-        await asyncio.sleep(0.1)
-        
-        while True:
-            await game.process_input_command(processor=n_b_input)
+        async with websockets.connect(BASE_URI) as ws:
+            game = BaseGameBJ(ws, 2)
+            await game.connect()
+            
+            if not v:
+                await game.create_new_round()
+            else:
+                await game.find_old_round()
+            
+            await game.check_wait_players()
             await asyncio.sleep(0.1)
+            
+            while True:
+                await game.process_input_command(processor=n_b_input)
+                await asyncio.sleep(0.1)
     
-    # except asyncio.exceptions.CancelledError:
-    #     pass
-    # except websockets.exceptions.ConnectionClosedError:
-    #     print("Внутренняя ошибка сервера или прокси сервера, попробуйте позже...")
-    #     exit()
-    # except ConnectionRefusedError:
-    #     print(f"Не удалось подключиться к серверу, попробуйте позже..")
-    #     exit()
-    # except KeyboardInterrupt:
-    #     print()
-    #     exit()
-    # except ValueError:
-    #     print("Пожалуйста, вводите корректные данные, не стоит устраивать 'проверки на дурака'")
-    #     print("Выходим из клиента, перезапустите его для продолжения...")
-    #     exit()
-    # except BaseException as e:
-    #     print(f"\nНеизвестная ошибка: {type(e)}, выходим из клиента..")
-    #     exit()
+    except asyncio.exceptions.CancelledError:
+        pass
+    except websockets.exceptions.ConnectionClosedError:
+        print("Внутренняя ошибка сервера или прокси сервера, попробуйте позже...")
+        exit()
+    except ConnectionRefusedError:
+        print(f"Не удалось подключиться к серверу, попробуйте позже..")
+        exit()
+    except KeyboardInterrupt:
+        print()
+        exit()
+    except ValueError:
+        print("Пожалуйста, вводите корректные данные, не стоит устраивать 'проверки на дурака'")
+        print("Выходим из клиента, перезапустите его для продолжения...")
+        exit()
+    except BaseException as e:
+        print(f"\nНеизвестная ошибка: {type(e)}, выходим из клиента..")
+        exit()
 
         
 asyncio.run(main())
