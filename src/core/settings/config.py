@@ -16,10 +16,3 @@ DEBUG: str = os.getenv("DEBUG").lower() == "true"
 HOST: str = os.getenv("HOST")
 PORT: int = int(os.getenv("PORT"))
 
-REDIS_URL: str = os.getenv("REDIS_URL")
-
-# Крайне не советую использовать log уровень с tg
-TG_LOG_TOKEN: str
-TG_INFO_LOG_CHANNEL: str
-TG_ERROR_LOG_CHANNEL: str
-
