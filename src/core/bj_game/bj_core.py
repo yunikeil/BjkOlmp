@@ -176,20 +176,20 @@ class RoundPlayer(BasePlayer):
         # Проигрышь
         self.is_last_win = False
         self.loose_points += self.__current__bet
-        self.__current__bet = 0
+        self.__current__bet = -1
     
     def win_bet(self):
         # Победа
         self.is_last_win = True
         self.win_points += self.__current__bet
-        self.__gamer_bank += self.__current__bet
-        self.__current__bet = 0
+        self.__gamer_bank += self.__current__bet * 2
+        self.__current__bet = -1
     
     def draw_bet(self):
         # Ничья
         self.is_last_win = None
         self.__gamer_bank += self.__current__bet
-        self.__current__bet = 0
+        self.__current__bet = -1
 
     def _create_bet(self, bet: int):
         bet = abs(bet)
@@ -218,6 +218,10 @@ class RoundPlayer(BasePlayer):
 
     def cards_to_text(self):
         return super().cards_to_text(need_hidden=False)
+    
+    def start_new_round(self):
+        self.is_move_over = False
+        self._cards = []
 
 
 class RoundDealer(BasePlayer):
@@ -230,12 +234,15 @@ class RoundDealer(BasePlayer):
 
         super().__init__()
 
-
     def to_dict(self):
         return {"cards": [card.to_dict() for card in self._cards],  "publick_name": self.publick_name, "is_move_over": self.is_move_over}
 
     def cards_to_text(self, need_hidden: bool = True):
         return super().cards_to_text(need_hidden=need_hidden)
+    
+    def start_new_round(self):
+        self.is_move_over = False
+        self._cards = []
 
 
 class GameRoom:
@@ -259,7 +266,8 @@ class GameRoom:
             "players": [player.to_dict() for player in self.__players],
             "dealer": self.__dealer.to_dict(),
             "is_started": self.is_started,
-            "id": self.id
+            "id": self.id,
+            "is_round_finished": self.is_round_finished,
         }
 
     def is_need_player(self) -> bool:
@@ -277,7 +285,14 @@ class GameRoom:
 
     def start_game(self):
         self.is_started = True
-
+    
+    def start_new_round(self):
+        self.results = {}
+        self.is_round_finished = False
+        self.__dealer.start_new_round()
+        for pl in self.__players:
+            pl.start_new_round()
+    
     def __shuffle_cards(self):
         shuffle(self.__available_cards)
 

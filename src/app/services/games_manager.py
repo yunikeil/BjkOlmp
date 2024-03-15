@@ -17,7 +17,7 @@ consonants = ['b', 'c', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'm', 'n', 'p', 'q', '
 
 
 def generate_name():
-    length = random.randint(3, 10)
+    length = random.randint(8, 12)
     if length <= 0:
         return False
 
@@ -32,6 +32,9 @@ def generate_name():
             
             else:
                 name += random.choice(vowels)
+    
+    if len(name) % 2 == 0:
+        name = name[:-1]
 
     return name.capitalize()
 
@@ -86,7 +89,10 @@ class TransactionalEventSystem:
     def add_draw_event(self, websocket: WebSocket, draw_event: dict):
         self.draw_events[websocket] = draw_event
     
-    async def send_events(self, dict_sender: Any = None) -> None:
+    async def send_events(self, dict_sender: Any = None, need_wait: bool = False,) -> None:
+        #if need_wait:
+        #    await asyncio.sleep(10)
+        
         for ws, dict_data_list in self.to_send.items():
             if dict_sender:
                 await dict_sender(ws, dict_data_list)
@@ -102,7 +108,6 @@ class TransactionalEventSystem:
                 )
             
 
-# TODO если сразу выпадает 21 у игрока логика не опрабатывает запрет некст шагов
 class GameConnectionManager:
     ws_connections: dict[str, WebSocket] = {}
     rooms: dict[bj_core.GameRoom, set[str]] = {}
@@ -144,9 +149,9 @@ class GameConnectionManager:
             }
         )
 
-    async def broadcast(self, clients_ids: list[int], event_type: str, data: dict, need_draw: bool = None):
+    async def broadcast(self, clients_ids: list[int], event_type: str, data: dict, draw_event: bool = None):
         for client_id in clients_ids:
-            await self.send_event(event_type, data, self.ws_connections[client_id], need_draw)
+            await self.send_event(event_type, data, self.ws_connections[client_id], draw_event)
            
     async def connect(self, conn_context: ConnectionContext):
         await conn_context.websocket.accept()
@@ -167,7 +172,7 @@ class GameConnectionManager:
                 return
             
             else:
-                await self.broadcast(players, "users_update", {"disconnected": conn_context.player.publick_name})
+                await self.broadcast(players, "users_update", {"disconnected": conn_context.player.publick_name}, f"К сожалению {conn_context.player.publick_name} отключился")
 
             break
     
@@ -196,7 +201,7 @@ class GameConnectionManager:
                     websocket=self.ws_connections[player_id]
                 )
                 ws_events.append(new_user_connected_event)
-                event_manager.add_draw_event(self.ws_connections[player_id], f"В комнату вступил новый игрок: {player.publick_name}")
+                event_manager.add_draw_event(self.ws_connections[player_id], f"В комнату вступил новый игрок: {player.publick_name} ")
             
             room.add_player(player)
             self.rooms[room].add(player.id)
@@ -234,6 +239,7 @@ class GameConnectionManager:
                 continue
             
             room.start_game()
+            await asyncio.sleep(5)
             await self.broadcast(players, "base_game_data_update", {"is_started": True, "accepted_methods": ["do_deal"]})
             break
 
@@ -243,9 +249,9 @@ class GameConnectionManager:
         event_manager = TransactionalEventSystem()
         for player_id in players_ids:
             ws = self.ws_connections[player_id]
-            event_manager.add_draw_event(ws, "Игра окончена! Показ результатов")
+            event_manager.add_draw_event(ws, "Игра окончена! Показ результатов ")
             full_room_event = WSEvent(
-                event_type="finish_game_data_update",
+                event_type="full_game_data_update",
                 data=room.to_dict(),
                 websocket=ws,
             )
@@ -256,10 +262,9 @@ class GameConnectionManager:
                 websocket=ws,
             )
             ws_events.append(round_finished_update_event)
-            # нет информации о том кто сколько и почему проебал
-
         event_manager.add_events(*ws_events)
-        
+        if room.is_round_finished:        
+            asyncio.create_task(self.start_next_round(room, players_ids))
         return event_manager
     
     async def __process_do_deal(self, data: dict, conn_context: ConnectionContext):
@@ -291,7 +296,7 @@ class GameConnectionManager:
             for player_id in players:
                 ws = self.ws_connections[player_id]
                 event_manager.add_draw_event(
-                    ws, f"{conn_context.player.publick_name} сделал ставку!"
+                    ws, f"{conn_context.player.publick_name} сделал ставку! "
                 )
 
                 user_create_deal_event = WSEvent(
@@ -315,7 +320,7 @@ class GameConnectionManager:
             await event_manager.send_events()
             
             if finish_manager:
-               await finish_manager.send_events()
+                await finish_manager.send_events(need_wait=True)
         
     async def __process_do_stand(self, data: dict, conn_context: ConnectionContext):
         for room, players in self.rooms.items():
@@ -361,7 +366,7 @@ class GameConnectionManager:
             await event_manager.send_events()
             
             if finish_manager:
-               await finish_manager.send_events()
+                await finish_manager.send_events(need_wait=True)
 
     async def __process_do_double(self, data: dict, conn_context: ConnectionContext):
         for room, players in self.rooms.items():
@@ -413,7 +418,7 @@ class GameConnectionManager:
             await event_manager.send_events()
             
             if finish_manager:
-               await finish_manager.send_events()
+                await finish_manager.send_events(need_wait=True)
 
 
     async def __process_do_hit(self, data: dict, conn_context: ConnectionContext):
@@ -428,12 +433,15 @@ class GameConnectionManager:
             finish_manager = None
 
             if is_move_over:
-                accepted_methods_update = WSEvent(
-                    event_type="base_game_data_update",
-                    data={"accepted_methods": []},
-                    websocket=conn_context.websocket,
-                )
-                ws_events.append(accepted_methods_update)
+                accepted_methods = []
+            else:
+                accepted_methods = ["do_stand", "do_hit"]
+            accepted_methods_update = WSEvent(
+                event_type="base_game_data_update",
+                data={"accepted_methods": accepted_methods},
+                websocket=conn_context.websocket,
+            )
+            ws_events.append(accepted_methods_update)
             
             for player_id in players:
                 ws = self.ws_connections[player_id]
@@ -462,7 +470,37 @@ class GameConnectionManager:
             await event_manager.send_events()
             
             if finish_manager:
-               await finish_manager.send_events()
+                await finish_manager.send_events(need_wait=True)
+    
+    async def start_next_round(self, room: bj_core.GameRoom, players: list[str]):
+        await asyncio.sleep(20)
+        if not room.is_round_finished:
+            return
+        
+        room.start_new_round()
+        event_manager = TransactionalEventSystem()
+        ws_events = []
+
+        for player_id in players:
+            ws = self.ws_connections[player_id]
+            event_manager.add_draw_event(
+                websocket=ws, draw_event=f"Начался новый раунд! "
+            )
+            new_room_event = WSEvent(
+                event_type="full_game_data_update",
+                data=room.to_dict(),
+                websocket=ws,
+            )
+            ws_events.append(new_room_event)
+            new_round_event = WSEvent(
+                event_type="base_game_data_update",
+                data={"accepted_methods": ["do_deal"]},
+                websocket=ws
+            )
+            ws_events.append(new_round_event)
+        
+        event_manager.add_events(*ws_events)
+        await event_manager.send_events()
         
     async def __process_event_type(
         self,

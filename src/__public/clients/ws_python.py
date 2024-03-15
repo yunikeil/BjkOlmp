@@ -1,23 +1,19 @@
-import asyncio
+import os
 import json
-import functools
-import websockets
+import time
 import asyncio
+import functools
 from typing import Literal
+
+import websockets
 from dataclasses import dataclass
-from json.decoder import JSONDecodeError
-
-import sys
-import curses
-import uuid
 
 
+# Адрес сервера
 BASE_URI = "ws://localhost:8000/ws/blackjack/"
-
-tasks: set[asyncio.Task] = set()
-
-
-# len - 11
+BASE_CLIENT_WIDTH=121
+# Список асинхронных задач, если таковые есть
+TASKS: set[asyncio.Task] = set()
 VIEW_CARD = """\
 ┌─────────┐
 │ {}      │
@@ -38,12 +34,10 @@ HIDDEN_CARD = """\
 │░░░░░░░░░│
 └─────────┘
 """
-
 CardNumber = Literal[
     "Aces", "2", "3", "4", "5", "6", "7", "8", "9", "10", "Jack", "Queen", "King"
 ]
 CardSuit = Literal["heart", "diamond", "club", "spade"]
-
 CARDS_WEIGHT: dict[CardNumber, int] = {
     "Aces": [11, 1],
     "2": [2, 2],
@@ -80,33 +74,158 @@ CARDS_SUITS: dict[CardSuit, str] = {
     "club": "♣",  # трефы
     "spade": "♠",  # пики
 }
+bold = "\033[1m"
+pink = "\033[38;2;255;105;180m"
+red = "\033[31m"
+green = "\033[32m"
+blue = "\033[34m"
+yellow = "\033[33m"
+reset = "\033[0m"
+vars_c = [bold, red, green, blue, yellow, reset]
+
+
+def blocking_wait(seconds: int, bar_len: int = 50, title: str = 'Пожалуйста подождите'):
+    """
+    Функция, для отрисовки загрузки в частности используется 
+    на моментах, когда пользователю нужно рассмотреть какую-либо информацию
+    """
+    seconds *= 10
+    for index in range(seconds):
+        percent_done = (index+1)/seconds*100
+        percent_done = round(percent_done, 1)
+
+        done = round(percent_done/(100/bar_len))
+        togo = bar_len-done
+
+        done_str = '█'*int(done)
+        togo_str = '░'*int(togo)
+
+        print(f'\t⏳ {title}: [{done_str}{togo_str}] {percent_done}% выполнено', end='\r')
+
+        if round(percent_done) == 100:
+            print('\t✅ ')
+        
+        time.sleep(0.1)
+
+
+async def nb_wait(seconds: int, bar_len: int = 50, title: str = 'Пожалуйста подождите'):
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, blocking_wait, seconds, bar_len, title)
+    return result
 
 
 def async_exit_handler(func):
+    """
+    Декоратор для единого перехвата ошибок в асинхронных функциях
+    """
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
         except (ConnectionRefusedError, websockets.exceptions.ConnectionClosedError):
             print("cant connect to server, exiting")
-            for task in tasks:
+            for task in TASKS:
                 task.cancel()
             exit()
 
-    
     return wrapper
+
+
+async def n_b_input(msg = None, default = None):
+    """ 
+    Неблокирующая функция ввода
+    """
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, n_input, msg, default)
+    return result
+
+
+def n_input(msg = None, default = None):
+    """
+    Функция ввода со стандратным значением
+    """
+    if not (default is None):
+        print(msg + str(default))
+        return default
+    elif msg is None and default is None:
+        return input()
+    return input(msg)
+
+
+def fold_strings(string: str, string_: str):
+    result_lines = []
+    lines_0 = string.splitlines()
+    lines_1 = string_.splitlines()
+    
+    for line_0, line_1 in zip(lines_0, lines_1):
+        result_lines.append(line_0 + " " +line_1)
+    
+    if len(lines_0) > len(lines_1):
+        result_lines.extend(lines_0[len(lines_1):])
+    elif len(lines_1) > len(lines_0):
+        result_lines.extend(lines_1[len(lines_0):])
+    
+    return "\n".join(result_lines)
+fs = fold_strings
+
+
+def find_len(text: str) -> int:
+    """ 
+    Считает чистую длину строки, без ansi символов
+    """
+    for ansi_color in vars_c:
+        text = text.replace(ansi_color, "")
+
+    return len(text)
+
+
+def frame_text(text: str, max_len: str = BASE_CLIENT_WIDTH, use_list: bool = False, need_center: bool = True) -> str | list[str]:
+    """
+    Обворачивает предоставленный текс в рамку
+    """
+    result = []
+    if not text:
+        return None
+    
+    lines = text.splitlines()
+    max_line_length = max(find_len(line) for line in lines)
+    buff = "┌" + "─" * (max_line_length + 2) + "┐"
+    result.append(buff.center(max_len) if need_center else buff)
+    for line in lines:
+        buff = "│ " + line + " " * (max_line_length - find_len(line)) + " │"
+        result.append(buff.center(max_len) if need_center else buff)
+
+    buff = "└" + "─" * (max_line_length + 2) + "┘\n"
+    result.append(buff.center(max_len) if need_center else buff)
+
+    if not use_list:
+        return "\n".join(result)
+
+    return result
+ft = frame_text
 
 
 @dataclass
 class Card:
+    """
+    dataclass для хранения информации о картах
+    """
     weight: CardNumber
     suit: CardSuit
 
     @staticmethod
     def from_json(data: dict) -> "Card":
+        """
+        Метод используется для создания карты из dict объекта
+        """
         return Card(**data)
 
     def to_text(self):
+        """
+        Превращаем данные в карте в текстовую строку
+        """
         weight = self.weight if self.weight == "10" else self.weight[0]
         return VIEW_CARD.format(
             weight=weight, weight_=REVERS_WEIGHT[weight], suit=CARDS_SUITS[self.suit]
@@ -114,17 +233,29 @@ class Card:
     
     @staticmethod
     def hidden():
+        """
+        Просто удобный способ для получения скрытой карты
+        """
         return HIDDEN_CARD
 
     def draw(self):
+        """
+        Отрисовывает карту
+        """
         print(self.to_text())
     
     def draw_hidden(self):
+        """
+        Отрисовывает скрытую карту        
+        """
         print(self.hidden())
 
 
 @dataclass
 class Player:
+    """
+    dataclass Игрока, имеет стандартные методы для ввода и вывода информации
+    """
     bank: int
     bet: int
     publick_name: str
@@ -137,6 +268,9 @@ class Player:
 
     @staticmethod
     def from_json(data: dict) -> "Player":
+        """ 
+        Создаёт новый объект игрока из словаря
+        """
         cards = []
         for card_json in data.get("cards", []):
             cards.append(Card.from_json(card_json))
@@ -147,9 +281,15 @@ class Player:
             publick_name = data.get("publick_name"),
             is_move_over = data.get("is_move_over"),
             cards = cards,
+            loose_points = data.get("loose_points"),
+            win_points = data.get("win_points"),
+            is_last_win = data.get("is_last_win"),
         )
     
     def update_from_json(self, data: dict):
+        """
+        Обновляет текущий объект из словаря
+        """
         self.bank = data.get("gamer_bank")
         self.bet = data.get("current_bet")
                 
@@ -173,20 +313,6 @@ class Player:
         """
         Возвращает количество очков игрока
         """
-        """
-        Не лучшее, но довольно простое решение
-         к примеру улучшить можно добавив if points >= 11
-         однако в таком случае пропадёт возможность менять
-         вес остальных карт
-        Непонятно по заданию в каком случае туз становится 1
-        Если перебор случился по его вине или в любом случае
-        Я реализовал так, что туз становиться 1 при переборе в любом из случаев
-        Вообще тем, кто писал эти задания отдельный привет, чтоб у вас все заказчики так ТЗ писали
-        В попытках найти информацию в сети интернет найдено было целое ничего.
-        В поисках экспертного мнения был обнаружен знакомый, проигравший 400кР в казино
-        К сожалению он решил оставить данный вопрос без комментариев.
-        """
-
         points = 0
         for card in self.cards:
             points += CARDS_WEIGHT[card.weight][0]
@@ -203,6 +329,9 @@ class Player:
         """
         Преобразует массив карт в линейную строку для вывода
         """
+        if not self.cards:
+            return None
+        
         card_lines = [*[card.to_text().splitlines() for card in self.cards]]
         if need_hidden:
             card_lines = [*[HIDDEN_CARD.splitlines()], *card_lines[1:]]
@@ -211,11 +340,42 @@ class Player:
         padded_lines = [lines + [""] * (max_lines - len(lines)) for lines in card_lines]
         transposed_lines = list(zip(*padded_lines))
         return "\n".join("".join(line for line in lines) for lines in transposed_lines)
+    
+    def to_text(self, is_started: bool, is_dealer: bool = False, is_result: bool = False, need_cards: bool = False):
+        """
+        Используется для создания массива строк данного пользователя
+        """
+        lines = []
+        lines.append(f"Имя: {'Me(' if self.is_me else ''}{self.publick_name}{')' if self.is_me else ''} ")
+        lines.append(f"Текущая ставка: {self.bet}")
+        lines.append(f"Текущий банк: {self.bank}")
+        if is_result:
+            lines.append(f"Выиграл всего: {self.win_points} ")
+            lines.append(f"Проиграл всего: {self.loose_points} ")
+            lines.append(f"Выиграл ли сейчас: {self.is_last_win} ")
+            lines.append(f"Количество очков {self.get_points()} ")
+            return "\n".join(lines)
+
+        lines.append(f"Закончил ли ход: {self.is_move_over} ")
+        if ((not is_dealer) or self.is_move_over) and self.cards:
+            lines.append(f"Количество очков {self.get_points()} ")
+        lines.append(f"Кол-во карт: {len(self.cards) if self.cards else 0} ")
+        if need_cards:
+            if is_started and self.cards:
+                lines.append(self.cards_to_text(True if (is_started and is_dealer and not self.is_move_over) else False))
+        
+        return "\n".join(lines)
 
     def draw_cards(self, need_hidder: bool = False):
+        """
+        Отрисовывает только карты игрока
+        """
         print(self.cards_to_text(need_hidder))
                     
     def draw(self, is_started: bool, is_dealer: bool = False, is_result: bool = False):
+        """
+        Отрисовывает игрока полностью
+        """
         print(f"Имя: {'Me(' if self.is_me else ''}{self.publick_name}{')' if self.is_me else ''}")
         print(f"Текущая ставка: {self.bet}")
         print(f"Текущий банк: {self.bank}")
@@ -233,51 +393,61 @@ class Player:
             self.draw_cards(True if (is_started and is_dealer and not self.is_move_over) else False)
 
 
-# python src/__public/clients/ws_python.py
-
-
 class BaseGameBJ:
+    """
+    Базовый класс для управления игрок
+    """
     def __init__(self, ws: websockets.WebSocketClientProtocol, max_players: int = -1) -> None:
         self.server = ws
         self.queue_inputs: list[str] = []
-        
-        # base game data
         self.me_pub_name = None
         self.is_round_finished: bool = False
         self.is_started: bool = False # (Game)
         self.max_players: int = max_players
         self.ws_id = None
-
-        # users_update   # user_update
         self.players: list[Player] = []
         self.dealer: Player = Player(bank=None, bet=None, publick_name="DealerBoss")
         
         self.all_server_methods: dict = {
-            "do_deal": [self.do_deal],
-            "do_stand": [self.do_stand],
+            "do_deal": [self.do_deal, "Сделать ставку"],
+            "do_stand": [self.do_stand, "Закончить ход"],
             #"do_split": ...,
-            "do_double": [self.do_double],
-            "do_hit": [self.do_hit],
+            "do_double": [self.do_double, "Удвоить ставку"],
+            "do_hit": [self.do_hit, "Взять карту"],
         }
         self.accepted_methods: list = []
 
     async def __disconnect(self) -> None:
+        """
+        Отключения от вебсоккета
+        """
         await self.server.close_connection()
     
     async def __send_json(self, data: dict) -> None:
+        """
+        Отправка словаря в вебсоккет
+        """
         await self.server.send(json.dumps(data))
     
     async def __receive_json(self) -> dict:
+        """
+        Получение словаря из вебсоккета
+        """
         data = json.loads(await self.server.recv())
         return data
 
     def find_player(self, publick_name):
+        """
+        Поиск игрока по публичному имени
+        """
         for player in self.players:
             if player.publick_name == publick_name:
                 return player
         
     async def __process_users_update(self, data: dict):
-        print("    |data| users_update", data)   
+        """
+        Обработка ивента users_update
+        """
         
         draw_event = None
         if player_name := data.get("connected", False):
@@ -303,19 +473,25 @@ class BaseGameBJ:
         return draw_event
     
     async def __process_dealer_update(self, data: dict):
-        print("    |data| dealer_update", data)   
+        """
+        Обработка ивента dealer_update
+        """ 
 
         dealer_data = data.get("dealer_data")
         self.dealer.update_from_json(dealer_data)
 
                     
     async def __process_base_game_data_update(self, data: dict):
-        print("    |data| base_game_data_update", data)
+        """
+        Обработка ивента base_game_data_update
+        """
         for key, value in data.items():
             setattr(self, key, value)
             
     async def _process_game_data_update(self, data: dict):
-        print("    |data| game_data_update", data)
+        """
+        Обработка ивента game_data_update
+        """
         self.max_players = data.get("max_players")
         for player_json in data.get("players", []):
             pl = Player.from_json(player_json)
@@ -323,21 +499,30 @@ class BaseGameBJ:
         
         self.dealer = Player.from_json(data.get("dealer"))
         self.is_started = data.get("is_started")
+        asyncio.create_task(nb_wait(5, title="Начинаем игру"))
     
-    async def __process_finish_game_data_update(self, data: dict):
-        print("    |data| finish_game_data_update", data)
+    async def __process_full_game_data_update(self, data: dict):
+        """ 
+        Обработка ивента full_game_data_updat
+        """
         self.max_players = data.get("max_players")
         self.players = []
         for player_json in data.get("players", []):
             pl = Player.from_json(player_json)
             if pl.publick_name == self.me_pub_name:
                 pl.is_me = True
-            self.players.append(pl)
+                self.players.insert(0, pl)
+            else:
+                self.players.append(pl)
                 
         self.dealer = Player.from_json(data.get("dealer"))
         self.is_started = data.get("is_started")
-                    
-    async def __process_event_type(self, event: str, data: dict):       
+        self.is_round_finished = data.get("is_round_finished")
+                        
+    async def __process_event_type(self, event: str, data: dict):
+        """
+        Получение ивента и дальнейшая отправка для обработки
+        """      
         match event:
             case "game_data_update":
                 # Полное обновление всех полей
@@ -355,11 +540,15 @@ class BaseGameBJ:
                 # или при СОЗДАНИИ новой комнаты
                 # или при начале игры (is_started)
                 await self.__process_base_game_data_update(data)
-            case "finish_game_data_update":
-                await self.__process_finish_game_data_update(data)
+            case "full_game_data_update":
+                await self.__process_full_game_data_update(data)
         
 
     async def __start_listen_ws_events(self):
+        """
+        listener для приходящих с сервера ивентов
+        """
+        # try:
         while True:
             server_data = await self.__receive_json()
             server_dict: list[dict] = server_data.get("events")
@@ -371,16 +560,33 @@ class BaseGameBJ:
                 await self.__process_event_type(event_type, data)
                         
             await self.draw_game(draw_event)
+        # except websockets.exceptions.ConnectionClosedError:
+        #     print("\nВероятно сервер перезапускается, перезагрузите клиент\n")
+        #     exit()
+        # except websockets.exceptions.ConnectionClosedOK as e:
+        #     print("\nВыключаем клиент...\n")
+        #     raise e
+        #     exit()
+        # except asyncio.exceptions.CancelledError:
+        #     exit()
+        # except BaseException as e:
+        #     print(f"\nНеизвестная ошибка: {type(e)}, выходим из клиента...\n")
+        #     exit()
 
     async def connect(self):
+        """
+        Подключение клиента (не вебсоккета) к серверу
+        """
         conn_data: dict = (await self.__receive_json())["events"][0]["data"]
         self.ws_id = conn_data.get("player_id")
         self.me_pub_name = conn_data.get("my_name")
         self.players.append(Player(bank=5000, bet=-1, publick_name=conn_data.get("my_name"), is_me=True))
-        asyncio.gather(self.__start_listen_ws_events())
-        #tasks.add(t)
+        asyncio.gather(self.__start_listen_ws_events())#!, return_exceptions=True)
         
     async def create_new_round(self):
+        """
+        Отправляем на сервер ивент для создания новой комнаты
+        """
         await self.__send_json(
             {
                 "event": "find_game",
@@ -392,26 +598,35 @@ class BaseGameBJ:
         )
 
     async def find_old_round(self):
+        """
+        Отправляем на сервер ивент для поиска уже созданной
+        """
         await self.__send_json(
             {
                 "event": "find_game",
                 "data": {
                     "game_type": "old",
-                    #"max_players": self.max_players
                 }
             }
         )
     
     async def start_game(self):
+        """
+        Отправляем на сервер ивент для начала игры
+        """
+        #blocking_wait(10)
         await self.__send_json(
             {
                 "event": "start_game",
             }
         )
+        asyncio.create_task(nb_wait(5, title="Начинаем игру"))
     
     async def do_deal(self) -> tuple:
-        # Делаем ставку, с получением карт (1)
-        bet = int(await self.process_input_command("Введите ставку", processor=n_b_input))
+        """
+        Обрабатываем пользовательский ввод, отправляем на сервер ивент
+        """
+        bet = int(await self.process_input_command("Введите ставку: ", processor=n_b_input))
         
         await self.__send_json(
             {
@@ -423,8 +638,11 @@ class BaseGameBJ:
         )
 
     async def do_stand(self) -> bool:
-        # Игрок завершает раунд оставляет текущее кол-во очков (2)
-        # Диллер добавляет себе карты пока ещё счёт не станет больше 16
+        """
+        Отправляем на сервер ивент о том, что игрок завершил ход
+        Игрок завершает раунд оставляет текущее кол-во очков (2)
+        Диллер добавляет себе карты пока ещё счёт не станет больше 16
+        """
         await self.__send_json(
             {
                 "event": "do_stand",
@@ -432,8 +650,11 @@ class BaseGameBJ:
         )
     
     async def do_double(self):
-        # Игрок удваивает ставку с запросом новой карты
-        # Работает только после превого хода
+        """
+        Отправляем на сервер ивент о том, что игрок удвоил ставку
+        Игрок удваивает ставку с запросом новой карты
+        Работает только после превого хода
+        """
         await self.__send_json(
             {
                 "event": "do_double",
@@ -441,7 +662,10 @@ class BaseGameBJ:
         )
 
     async def do_hit(self):
-        # Игрок просит новую карту, можно делать пока не будет > 21
+        """
+        Отправляем на сервер ивент о том, что игрок просит карту
+        Игрок просит новую карту, можно делать пока не будет > 21
+        """
         await self.__send_json(
             {
                 "event": "do_hit",
@@ -449,23 +673,39 @@ class BaseGameBJ:
         )
     
     async def check_wait_players(self):
-        # TODO Перенести на сторону сервера
+        """
+        Проверяем, если комната полная, начинаем игру
+        Единственный метод, который полнятся с клиентской обработкой
+        Перенести на сервер не хватает времени, хотя и занимает данное действие
+         крайне маленькое количество времени
+        """
         if len(self.players) == self.max_players:
             await self.start_game()
     
-    async def process_input_command(self, question = None, processor = None, *args):        
+    async def process_input_command(self, question = None, processor = None, *args):
+        """
+        Обрабатываем команды, которые поступают от пользователя
+        Данный метод делался с заделом на будущее (планировалась поддержка ввода/вывода curses а также msvcrt)
+        В идеале для обработки ввода использовать общеизвестный пример khbit для языка python
+        """     
         if not self.is_started:
             return
 
         if not self.accepted_methods:
             return
         
-        if not question:
-            pre_q = "Разрешенные действия: \n" + str(self.accepted_methods) + "\nВыберите индекс нужного действия: "
-            print(pre_q)
+        if not question: # TODO переделать чудо
+            pre_q = ""
+            for i, method_name in enumerate(self.accepted_methods):
+                descr = self.all_server_methods[method_name][1]
+                pre_q += f"[{i}] :: {descr}\n"
+            pre_q += f"Выберите требуемое действие [{0}-{len(self.accepted_methods)-1}]:"
+            # pre_q = "Разрешенные действия: \n" + str(self.accepted_methods) + "\nВыберите индекс нужного действия: "
+            # print(self.accepted_methods)
+            print(pre_q, end=" ")
             self.queue_inputs.append(pre_q)
         else:
-            print(question)
+            print(question, end=" ")
             self.queue_inputs.append(question)
 
         if processor:
@@ -479,70 +719,112 @@ class BaseGameBJ:
             return command
     
     async def draw_game(self, draw_event: dict = {}):
-        print()
-        print("================================== next_list ==================================")#os.system("clear")
+        """
+        Метод используемый для отрисовки класса game
+        """
+        os.system("clear")
+        #print("================================== next_list ==================================")
         if draw_event:
-            print(draw_event)
-
+            print(ft(draw_event))
+        
         if not self.is_started:
-            print("Ожидание игроков...")
-            print("Игроков в лобби:", len(self.players))
+            print(ft(f"Ожидание игроков, в лобби: {len(self.players)} "))
             for player in self.players:
-                print("------------")
-                player.draw(self.is_started)
-                
+                print(ft(player.to_text(self.is_started)))
+        
         elif self.is_round_finished:
-            print("Раунд закончен. Результаты:")
-            print("Диллер: ")
-            self.dealer.draw(self.is_started, True, True)
+            print(ft("Раунд закончен! Результаты =>"))
+            dealer_b = ft(self.dealer.to_text(self.is_started, True, True, need_cards=False), need_center=False)
+            cards_b = self.dealer.cards_to_text(True)
+            if cards_b:
+                print(fs(dealer_b, cards_b))
+            else:
+                print(dealer_b)
             for player in self.players:
-                print("------------")
-                player.draw(self.is_started, False, True)
-            print("------------")
-                
-        elif self.is_started:            
-            print("Игра идёт!")
-            print("Игроков в лобби:", len(self.players))
-            print("Диллер: ")
-            self.dealer.draw(self.is_started, True)
+                player_b = ft(player.to_text(self.is_started, False, True, need_cards=False), need_center=False)
+                cards_b_p =  player.cards_to_text()
+                if cards_b_p:
+                    print(fs(player_b, cards_b_p))
+                else:
+                    print(player_b)
+            
+            await nb_wait(10 * 2, title="Ознакомление с результатами")
+
+        elif self.is_started:
+            dealer_b = ft(self.dealer.to_text(self.is_started, True, need_cards=False), need_center=False)
+            cards_b = self.dealer.cards_to_text(True)
+            if cards_b:
+                print(fs(dealer_b, cards_b))
+            else:
+                print(dealer_b)
             for player in self.players:
-                print("------------")
-                player.draw(self.is_started)
-        print("------------")
+                player_b = ft(player.to_text(self.is_started, need_cards=False), need_center=False)
+                cards_b_p =  player.cards_to_text()
+                if cards_b_p:
+                    print(fs(player_b, cards_b_p))
+                else:
+                    print(player_b)
         
+    
         if self.queue_inputs:
-            print(self.queue_inputs[-1])
+            print(self.queue_inputs[-1], end=" ")
+
+        # print()
+        # print("================================== next_list ==================================")#os.system("clear")
+        # if draw_event:
+        #     print(draw_event)
+
+        # if not self.is_started:
+        #     print("Ожидание игроков...")
+        #     print("Игроков в лобби:", len(self.players))
+        #     for player in self.players:
+        #         print("------------")
+        #         player.draw(self.is_started)
+                
+        # elif self.is_round_finished:
+        #     print("Раунд закончен. Результаты:")
+        #     print("Диллер: ")
+        #     self.dealer.draw(self.is_started, True, True)
+        #     for player in self.players:
+        #         print("------------")
+        #         player.draw(self.is_started, False, True)
+        #     print("------------")
+                
+        # elif self.is_started:            
+        #     print("Игра идёт!")
+        #     print("Игроков в лобби:", len(self.players))
+        #     print("Диллер: ")
+        #     self.dealer.draw(self.is_started, True)
+        #     for player in self.players:
+        #         print("------------")
+        #         player.draw(self.is_started)
+        # print("------------")
         
-        
- 
-# !TODO серв часть обработка вертание карт
-# TODO(when) основа готова (need) рефактор
+        # if self.queue_inputs:
+        #     print(self.queue_inputs[-1])
 
-import asyncio
-import concurrent.futures
-
-async def n_b_input(msg = None, default = None):
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None, n_input, msg, default)
-    return result
-
-
-def n_input(msg = None, default = None):
-    if not (default is None):
-        print(msg + str(default))
-        return default
-    elif msg is None and default is None:
-        return input()
-    return input(msg)
-
-import os
-os.system("clear")
 
 async def main():
-    print("Привет это игра блек джек!")
-    v = int(n_input("Создать комнату/присоединиться? [0/1]: "))
-    
+    """
+    Главная функция клиента, в которой происходит первоначальная настройка и обработка пользовательского ввода
+    Серверная сторона также должна была поддерживать работу с чистым текстом (клиент отвечает за вывод и ввод)
+     без дополнительного упрощения в json (для этого была предусмотрен один из header параметров: Connection-Type)
+     также можно ставить свои никнеймы с использование дополнительного параметра Publick-Name.
+    Однако от этого пришлось отказаться из-за нехватки времени, хотя времени данные изменения не будут привносить
+    Также в проекте существует много проблем с определением ивентов, к примеру, неоднозначные наименования
+    Изначально предполагалась одиночная игра и консольный мини-сайтик, но в процессе было решено переписать на
+     онлайн игру, это вызвало проблемы не только с определением ивентов, но и в других частях.
+    Как простейший вариант исправления, можно использовать лишь один метод обновления сразу всех данных, т.к. данные
+     на клиента обновляются довольно редко, это могло бы сильно упростить как разработку так и чтение кода...
+    """
+    #try:
+    os.system("clear")
+    hello_message = "Если игра неправильно отображается в консоли, попробуйте сделать её шире\n"
+    hello_message += "Базовая ширина консоли составляет около 120 символов, интерфейс рассчитан 124 символа. "
+    print(ft(hello_message))
+    print(ft("Привет это игра блек джек! Пожалуйста, выберите вариант игры ниже\n"))
+    v = int(n_input("Создать комнату/присоединиться? [0/1]:".center(BASE_CLIENT_WIDTH).rstrip() + " "))
+
     async with websockets.connect(BASE_URI) as ws:
         game = BaseGameBJ(ws, 2)
         await game.connect()
@@ -558,146 +840,25 @@ async def main():
         while True:
             await game.process_input_command(processor=n_b_input)
             await asyncio.sleep(0.1)
+    
+    # except asyncio.exceptions.CancelledError:
+    #     pass
+    # except websockets.exceptions.ConnectionClosedError:
+    #     print("Внутренняя ошибка сервера или прокси сервера, попробуйте позже...")
+    #     exit()
+    # except ConnectionRefusedError:
+    #     print(f"Не удалось подключиться к серверу, попробуйте позже..")
+    #     exit()
+    # except KeyboardInterrupt:
+    #     print()
+    #     exit()
+    # except ValueError:
+    #     print("Пожалуйста, вводите корректные данные, не стоит устраивать 'проверки на дурака'")
+    #     print("Выходим из клиента, перезапустите его для продолжения...")
+    #     exit()
+    # except BaseException as e:
+    #     print(f"\nНеизвестная ошибка: {type(e)}, выходим из клиента..")
+    #     exit()
 
-
+        
 asyncio.run(main())
-
-
-
-
-
-"""
-# Скобочки для скрытия в редакторе
-
-# Ниже содержание других тестовых файлов, может пригодиться
-# Надеюсь историю гита не будет никто читать :)
-
-# #! khbit base переписать под нужды
-
-# import os
-
-# if os.name == 'nt':
-#     import msvcrt
-# else:
-#     import sys
-#     import termios
-#     import atexit
-#     from select import select
-
-
-# class KBHit:
-#     def __init__(self):
-#         if os.name == 'nt':
-#             pass
-#         else:
-#             self.fd = sys.stdin.fileno()
-#             self.new_term = termios.tcgetattr(self.fd)
-#             self.old_term = termios.tcgetattr(self.fd)
-
-#             self.new_term[3] = (self.new_term[3] & ~termios.ICANON & ~termios.ECHO)
-#             termios.tcsetattr(self.fd, termios.TCSAFLUSH, self.new_term)
-
-#             atexit.register(self.set_normal_term)
-
-
-#     def set_normal_term(self):
-#         if os.name == 'nt':
-#             pass
-#         else:
-#             termios.tcsetattr(self.fd, termios.TCSAFLUSH, self.old_term)
-
-
-#     def getch(self):
-#         s = ''
-#         if os.name == 'nt':
-#             return msvcrt.getch().decode('utf-8')
-#         else:
-#             return sys.stdin.read(1)
-
-
-#     def getarrow(self):
-#         ''' Returns an arrow-key code after kbhit() has been called. Codes are
-#         0 : up
-#         1 : right
-#         2 : down
-#         3 : left
-#         Should not be called in the same program as getch().
-#         '''
-
-#         if os.name == 'nt':
-#             msvcrt.getch() # skip 0xE0
-#             c = msvcrt.getch()
-#             vals = [72, 77, 80, 75]
-#         else:
-#             c = sys.stdin.read(3)[2]
-#             vals = [65, 67, 66, 68]
-
-#         return vals.index(ord(c.decode('utf-8')))
-
-
-#     def kbhit(self):
-#         if os.name == 'nt':
-#             return msvcrt.kbhit()
-#         else:
-#             dr,dw,de = select([sys.stdin], [], [], 0)
-#             return dr != []
-
-
-# if __name__ == "__main__":
-#     kb = KBHit()
-#     print('Hit any key, or ESC to exit')
-#     while True:
-#         if kb.kbhit():
-#             c = kb.getch()
-#             if ord(c) == 27:
-#                 break
-#             print(c)
-
-#     kb.set_normal_term()
-
-
-# ! curses example of code 
-
-
-# import curses
-# import time
-
-# screen = curses.initscr()
-# curses.curs_set(0)
-
-# for i in range(50):
-#     screen.clear()
-#     screen.addstr(10, i, "x")
-#     screen.refresh()
-#     time.sleep(0.1)
-
-# curses.endwin()
-
-
-# ! \t\r example 
-
-
-# import time
-
-# def print_percent_done(index, total, bar_len=50, title='Please wait'):
-#     percent_done = (index+1)/total*100
-#     percent_done = round(percent_done, 1)
-
-#     done = round(percent_done/(100/bar_len))
-#     togo = bar_len-done
-
-#     done_str = '█'*int(done)
-#     togo_str = '░'*int(togo)
-
-#     print(f'\t⏳{title}: [{done_str}{togo_str}] {percent_done}% done', end='\r')
-
-#     if round(percent_done) == 100:
-#         print('\t✅')
-
-
-# r = 50
-# for i in range(r):
-#     print_percent_done(i,r)
-#     time.sleep(0.02)
-
-"""
