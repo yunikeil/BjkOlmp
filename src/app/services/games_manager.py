@@ -7,7 +7,6 @@ from pydantic import ValidationError
 from fastapi import Depends, Header, WebSocket, WebSocketException, status
 
 from core.bj_game import bj_core
-from core.redis import get_redis_client, get_redis_pipeline
 
 
 import random
