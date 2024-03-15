@@ -4,7 +4,6 @@ from fastapi.responses import PlainTextResponse
 
 from core.depends import get_type_client
 from core.utils.content import main_pages 
-from core.utils.mytypes import clients, reverse_client
 
 
 router = APIRouter()

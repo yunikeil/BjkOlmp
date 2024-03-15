@@ -11,15 +11,8 @@ env_path = os.path.join(root_path, ".env")
 load_dotenv(dotenv_path=env_path, override=True)
 
 
-DEBUG: str
+DEBUG: str = os.getenv("DEBUG").lower() == "true"
 
-HOST: str
-PORT: int
-
-REDIS_URL: str
-
-# Крайне не советую использовать log уровень с tg
-TG_LOG_TOKEN: str
-TG_INFO_LOG_CHANNEL: str
-TG_ERROR_LOG_CHANNEL: str
+HOST: str = os.getenv("HOST")
+PORT: int = int(os.getenv("PORT"))
 

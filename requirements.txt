@@ -1,8 +1,7 @@
-uvicorn
+uvicorn[standart]
 fastapi
 python-dotenv
-redis
-colorlog
+websockets
 httpx
 anyio
 pytest
