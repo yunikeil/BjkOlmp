@@ -242,6 +242,7 @@ class BaseGameBJ:
         self.queue_inputs: list[str] = []
         
         # base game data
+        self.me_pub_name = None
         self.is_round_finished: bool = False
         self.is_started: bool = False # (Game)
         self.max_players: int = max_players
@@ -322,6 +323,19 @@ class BaseGameBJ:
         
         self.dealer = Player.from_json(data.get("dealer"))
         self.is_started = data.get("is_started")
+    
+    async def __process_finish_game_data_update(self, data: dict):
+        print("    |data| finish_game_data_update", data)
+        self.max_players = data.get("max_players")
+        self.players = []
+        for player_json in data.get("players", []):
+            pl = Player.from_json(player_json)
+            if pl.publick_name == self.me_pub_name:
+                pl.is_me = True
+            self.players.append(pl)
+                
+        self.dealer = Player.from_json(data.get("dealer"))
+        self.is_started = data.get("is_started")
                     
     async def __process_event_type(self, event: str, data: dict):       
         match event:
@@ -341,6 +355,8 @@ class BaseGameBJ:
                 # или при СОЗДАНИИ новой комнаты
                 # или при начале игры (is_started)
                 await self.__process_base_game_data_update(data)
+            case "finish_game_data_update":
+                await self.__process_finish_game_data_update(data)
         
 
     async def __start_listen_ws_events(self):
@@ -359,6 +375,7 @@ class BaseGameBJ:
     async def connect(self):
         conn_data: dict = (await self.__receive_json())["events"][0]["data"]
         self.ws_id = conn_data.get("player_id")
+        self.me_pub_name = conn_data.get("my_name")
         self.players.append(Player(bank=5000, bet=-1, publick_name=conn_data.get("my_name"), is_me=True))
         asyncio.gather(self.__start_listen_ws_events())
         #tasks.add(t)
@@ -527,7 +544,7 @@ async def main():
     v = int(n_input("Создать комнату/присоединиться? [0/1]: "))
     
     async with websockets.connect(BASE_URI) as ws:
-        game = BaseGameBJ(ws, 1)
+        game = BaseGameBJ(ws, 2)
         await game.connect()
         
         if not v:

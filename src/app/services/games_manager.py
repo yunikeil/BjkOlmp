@@ -236,21 +236,45 @@ class GameConnectionManager:
             room.start_game()
             await self.broadcast(players, "base_game_data_update", {"is_started": True, "accepted_methods": ["do_deal"]})
             break
-    
-    async def finish_round(self, room: bj_core.GameRoom, players_ids: list[str], conn_context: ConnectionContext):
-        # Обновление информации пользователей (итоговая)        
-        ...
+
+    async def finish_round(self, room: bj_core.GameRoom, players_ids: list[str], conn_context: ConnectionContext) -> TransactionalEventSystem:
+        # Обновление информации пользователей (итоговая)
+        ws_events = []
+        event_manager = TransactionalEventSystem()
+        for player_id in players_ids:
+            ws = self.ws_connections[player_id]
+            event_manager.add_draw_event(ws, "Игра окончена! Показ результатов")
+            full_room_event = WSEvent(
+                event_type="finish_game_data_update",
+                data=room.to_dict(),
+                websocket=ws,
+            )
+            ws_events.append(full_room_event)
+            round_finished_update_event = WSEvent(
+                event_type="base_game_data_update",
+                data={"is_round_finished": room.is_round_finished},
+                websocket=ws,
+            )
+            ws_events.append(round_finished_update_event)
+            # нет информации о том кто сколько и почему проебал
+
+        event_manager.add_events(*ws_events)
+        
+        return event_manager
     
     async def __process_do_deal(self, data: dict, conn_context: ConnectionContext):
         for room, players in self.rooms.items():
             if conn_context.player.id not in players:
                 continue
             
+            # TODO добавить метод для проверки результатов (ожидания игроков с тем, что произошло)
+            # Ну или в конце отрисовывать полное поле с доп инфой о след раунде
             bet = int(data.get("bet"))
             is_player_finished = room.do_deal(conn_context.player, bet)
             dealer = room.if_all_with_cards_add_cards_to_dealer()
             event_manager = TransactionalEventSystem()
             ws_events = []
+            finish_manager = None
             
             if is_player_finished:
                 accepted_methods = []
@@ -278,22 +302,20 @@ class GameConnectionManager:
                 ws_events.append(user_create_deal_event)
                 
                 if dealer:
-                    room.check_is_all_players_standed()
                     dealer_update_event = WSEvent(
                         event_type="dealer_update",
                         data={"dealer_data": dealer.to_dict()},
                         websocket=ws,
                     )
                     ws_events.append(dealer_update_event)
-                    round_finished_update_event = WSEvent(
-                        event_type="base_game_data_update",
-                        data={"is_round_finished": room.is_round_finished},
-                        websocket=ws,
-                    )
-                    ws_events.append(round_finished_update_event)
+                    if room.check_is_all_players_standed():
+                        finish_manager = await self.finish_round(room, players, conn_context)
             
             event_manager.add_events(*ws_events)
             await event_manager.send_events()
+            
+            if finish_manager:
+               await finish_manager.send_events()
         
     async def __process_do_stand(self, data: dict, conn_context: ConnectionContext):
         for room, players in self.rooms.items():
@@ -302,15 +324,44 @@ class GameConnectionManager:
             
             room.do_stand(conn_context.player)
             dealer = room.check_is_all_players_standed()
+            event_manager = TransactionalEventSystem()
+            ws_events = []
+            finish_manager = None
 
-            await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
-            await self.send_event("base_game_data_update", {"accepted_methods": []}, conn_context.websocket)
+            accepted_methods_update = WSEvent(
+                event_type="base_game_data_update",
+                data={"accepted_methods": []},
+                websocket=conn_context.websocket,
+            )
+            ws_events.append(accepted_methods_update)
             
-            if dealer:
-                await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
-                await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
-            ...
-        ...
+            for player_id in players:
+                ws = self.ws_connections[player_id]
+                event_manager.add_draw_event(
+                    websocket=ws, draw_event=f"{conn_context.player.publick_name} завершил ход!"
+                )
+
+                player_standed_event = WSEvent(
+                    event_type="users_update",
+                    data={"user_data": conn_context.player.to_dict()},
+                    websocket=ws,
+                )
+                ws_events.append(player_standed_event)
+                            
+                if dealer:
+                    dealer_update_event = WSEvent(
+                        event_type="dealer_update",
+                        data={"dealer_data": dealer.to_dict()},
+                        websocket=ws,
+                    )
+                    ws_events.append(dealer_update_event)
+                    finish_manager = await self.finish_round(room, players, conn_context)
+
+            event_manager.add_events(*ws_events)
+            await event_manager.send_events()
+            
+            if finish_manager:
+               await finish_manager.send_events()
 
     async def __process_do_double(self, data: dict, conn_context: ConnectionContext):
         for room, players in self.rooms.items():
@@ -319,39 +370,99 @@ class GameConnectionManager:
             
             is_move_over = room.do_double(conn_context.player)
             dealer = room.check_is_all_players_standed()
+            event_manager = TransactionalEventSystem()
+            ws_events = []
+            finish_manager = None
 
             if is_move_over:
-                await self.send_event("base_game_data_update", {"accepted_methods": []}, conn_context.websocket)
-            await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
+                accepted_methods = []
+            else:
+                accepted_methods =  ["do_stand", "do_hit"]
             
-            if dealer:
-                await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
-                await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
+            accepted_methods_update = WSEvent(
+                event_type="base_game_data_update",
+                data={"accepted_methods": accepted_methods},
+                websocket=conn_context.websocket,
+            )
+            ws_events.append(accepted_methods_update)
 
+            
+            for player_id in players:
+                ws = self.ws_connections[player_id]
+                event_manager.add_draw_event(
+                    websocket=ws, draw_event=f"{conn_context.player.publick_name} удвоил ставку!"
+                )
 
-            ...     
-        ...
+                user_update_event = WSEvent(
+                    event_type="users_update",
+                    data={"user_data": conn_context.player.to_dict()},
+                    websocket=ws,
+                )
+                ws_events.append(user_update_event)
+                        
+                if dealer:
+                    dealer_update_event = WSEvent(
+                        event_type="dealer_update",
+                        data={"dealer_data": dealer.to_dict()},
+                        websocket=ws,
+                    )
+                    ws_events.append(dealer_update_event)
+                    finish_manager = await self.finish_round(room, players, conn_context)
+
+            event_manager.add_events(*ws_events)
+            await event_manager.send_events()
+            
+            if finish_manager:
+               await finish_manager.send_events()
+
 
     async def __process_do_hit(self, data: dict, conn_context: ConnectionContext):
         for room, players in self.rooms.items():
-            # Ошибка вероятно заключается в том, что обновляются несколько пользователей
-            # А отправляется только один из пользователей ... 
             if conn_context.player.id not in players:
                 continue
             
             is_move_over = room.do_hit(conn_context.player)
             dealer = room.check_is_all_players_standed()
-            
+            event_manager = TransactionalEventSystem()
+            ws_events = []
+            finish_manager = None
+
             if is_move_over:
-                await self.send_event("base_game_data_update", {"accepted_methods": []}, conn_context.websocket)
-            await self.broadcast(players, "users_update", {"user_data": conn_context.player.to_dict()})
+                accepted_methods_update = WSEvent(
+                    event_type="base_game_data_update",
+                    data={"accepted_methods": []},
+                    websocket=conn_context.websocket,
+                )
+                ws_events.append(accepted_methods_update)
+            
+            for player_id in players:
+                ws = self.ws_connections[player_id]
+                event_manager.add_draw_event(
+                    websocket=ws, draw_event=f"{conn_context.player.publick_name} взял карту!"
+                )
 
-            if dealer:
-                await self.broadcast(players, "dealer_update", {"dealer_data": dealer.to_dict()})
-                await self.broadcast(players, "base_game_data_update", {"is_round_finished": room.is_round_finished})
+                user_update_event = WSEvent(
+                    event_type="users_update",
+                    data={"user_data": conn_context.player.to_dict()},
+                    websocket=ws,
+                )
+                ws_events.append(user_update_event)
 
-            ...     
-        ...
+
+                if dealer:
+                    dealer_update_event = WSEvent(
+                        event_type="dealer_update",
+                        data={"dealer_data": dealer.to_dict()},
+                        websocket=ws,
+                    )
+                    ws_events.append(dealer_update_event)
+                    finish_manager = await self.finish_round(room, players, conn_context)
+
+            event_manager.add_events(*ws_events)
+            await event_manager.send_events()
+            
+            if finish_manager:
+               await finish_manager.send_events()
         
     async def __process_event_type(
         self,
