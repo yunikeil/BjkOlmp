@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 
 # Адрес сервера
-BASE_URI = "ws://localhost:8001/ws/blackjack/"
+BASE_URI = "ws://localhost:8000/ws/blackjack/"
 BASE_CLIENT_WIDTH=121
 # Список асинхронных задач, если таковые есть
 TASKS: set[asyncio.Task] = set()
@@ -738,7 +738,7 @@ class BaseGameBJ:
         
         elif self.is_round_finished:
             print(ft("Раунд закончен! Результаты =>"))
-            dealer_b = ft(self.dealer.to_text(self.is_started, False, True, need_cards=False), need_center=False)
+            dealer_b = ft(self.dealer.to_text(self.is_started, True, True, need_cards=False), need_center=False)
             cards_b = self.dealer.cards_to_text(False)
             if cards_b:
                 print(fs(dealer_b, cards_b))
